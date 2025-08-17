@@ -1,14 +1,16 @@
+import 'package:checkgame/logic/deckgenerator.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bloc_test/bloc_test.dart';
 
-import 'package:checkgames/Bloc/checkgames_bloc.dart';
-import 'package:checkgames/Bloc/checkgames_state.dart';
-import 'package:checkgames/Bloc/checkgames_event.dart';
-import 'package:checkgames/models/playing_card.dart';
-import 'package:checkgames/models/card_value.dart';
-import 'package:checkgames/models/card_suit.dart';
-import 'package:checkgames/models/player_card.dart';
-import 'package:checkgames/logic/rule_engine.dart';
+import 'package:checkgame/Bloc/checkgames_bloc.dart';
+import 'package:checkgame/Bloc/checkgames_state.dart';
+import 'package:checkgame/Bloc/checkgames_event.dart';
+import 'package:checkgame/models/playing_card.dart';
+import 'package:checkgame/models/card_value.dart';
+import 'package:checkgame/models/card_suit.dart';
+import 'package:checkgame/models/player_card.dart';
+import 'package:checkgame/logic/rule_engine.dart';
+
 
 void main() {
   group('Check - RestartGame', () {
@@ -51,7 +53,7 @@ void main() {
       final newHands = newState.players.map((p) => p.hand).toList();
       expect(newHands, isNot(equals(oldHands)));
     });
-    test('EndTurn - player unable to play draws a card and turn passes', () async {
+    test('EndTurn1 - player unable to play draws a card and turn passes', () async {
       final bloc = CheckGameBloc();
 
       bloc.add(StartGame(['Alice', 'Bob']));
@@ -81,7 +83,7 @@ void main() {
       ));
 
 
-      bloc.add(EndTurn(playerId: '1'));
+      bloc.add(EndTurn());
       await Future.delayed(Duration.zero);
 
       final newState = bloc.state;
@@ -91,13 +93,13 @@ void main() {
       expect(bobAfter.hand.length, equals(bobHandBefore + 1));
 
 
-      expect(newState.currentPlayerIndex, equals(0));
+      expect(newState.currentPlayerIndex, equals(1));
 
 
       expect(newState.skipCount, equals(0));
       expect(newState.imposedSuit, isNull);
     });
-    test('EndTurn - next player can play, no draw, turn passes correctly', () async {
+    test('EndTurn2 - next player can play, no draw, turn passes correctly', () async {
       final bloc = CheckGameBloc();
 
       // Étape 1 : Démarrer une partie avec deux joueurs
@@ -123,21 +125,21 @@ void main() {
       ));
 
 
-      bloc.add(EndTurn(playerId: '1'));
+      bloc.add(EndTurn());
+
       await Future.delayed(Duration.zero);
 
       final newState = bloc.state;
 
       expect(newState.currentPlayerIndex, equals(1));
 
-
       expect(newState.players[1].hand.length, equals(1));
       expect(newState.players[1].hand.first, equals(bobPlayableCard));
-
 
       expect(newState.skipCount, equals(0));
       expect(newState.imposedSuit, isNull);
     });
+
     test('PlayCard - Valet impose une couleur', () async {
       final bloc = CheckGameBloc();
 
@@ -201,38 +203,26 @@ void main() {
       bloc.add(StartGame(['Alice', 'Bob']));
       await Future.delayed(Duration.zero);
 
-      final jokerCard = PlayingCard(suit: CardSuit.joker, value: CardValue.joker);
+      final jokerCard = PlayingCard(suit: CardSuit.jokerRed, value: CardValue.joker);
+      final topCard = PlayingCard(suit: CardSuit.diamonds, value: CardValue.five);
 
-      // Donne à Alice uniquement le Joker
-      final updatedPlayers = [
-        bloc.state.players[0].copyWith(hand: [jokerCard]),
-        bloc.state.players[1],
-      ];
-      bloc.emit(bloc.state.copyWith(players: updatedPlayers));
 
-      // Alice joue le Joker et impose "carreau"
-      bloc.add(PlayCard(
-        playerId: updatedPlayers[0].id,
-        cards: [jokerCard],
-        imposedSuit: CardSuit.diamonds,
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [topCard],
+        players: [
+          bloc.state.players[0].copyWith(hand: [jokerCard]),
+          bloc.state.players[1],
+        ],
       ));
+
+      // Alice joue le joker
+      bloc.add(PlayCard(playerId: bloc.state.players[0].id, cards: [jokerCard]));
       await Future.delayed(Duration.zero);
 
-      // Bob termine son tour, il doit piocher 4 cartes
-      bloc.add(EndTurn(playerId: bloc.state.players[1].id));
+      final afterPlay = bloc.state;
+      expect(afterPlay.currentPlayerIndex, equals(1));
+      expect(afterPlay.cardsToDraw, equals(4));
 
-      await Future.delayed(Duration.zero);
-
-      final newBob = bloc.state.players[1];
-
-      // Bob a bien pioché 4 cartes
-      expect(newBob.hand.length, greaterThanOrEqualTo(4));
-
-      // imposedSuit a été reset après le tour
-      expect(bloc.state.imposedSuit, isNull);
-
-      // cardsToDraw a été reset
-      expect(bloc.state.cardsToDraw, equals(0));
     });
     test('PlayCard - Valet impose une couleur au joueur suivant', () async {
       final bloc = CheckGameBloc();
@@ -327,7 +317,345 @@ void main() {
       //  Tour suivant : Bob
       expect(bloc.state.currentPlayerIndex, equals(1));
     });
+    test('PlayCard - Double joker fait piocher' , () async {
+        final bloc = CheckGameBloc();
 
+        bloc.add(StartGame(['Alain', 'Bob', 'Claire']));
+        await Future.delayed(Duration.zero);
+
+        final joker1 = PlayingCard(suit: CardSuit.jokerRed, value: CardValue.joker);
+        final joker2 = PlayingCard(suit: CardSuit.jokerRed, value: CardValue.joker);
+        final topCard = PlayingCard(suit: CardSuit.diamonds, value: CardValue.five);
+
+        final drawPile = List<PlayingCard>.generate(
+          20,
+              (index) => PlayingCard(
+            suit: CardSuit.spades,
+            value: CardValue.values[index % CardValue.values.length],
+          ),
+        );
+
+
+        bloc.emit(bloc.state.copyWith(
+          discardPile: [topCard],
+          drawPile: drawPile,
+          players: [
+            bloc.state.players[0].copyWith(hand: [joker1]),
+            bloc.state.players[1].copyWith(hand: [joker2]),
+            bloc.state.players[2].copyWith(hand: []), // Claire ne possède pas de joker
+          ],
+          currentPlayerIndex: 0,
+        ));
+
+        // Alain joue un joker
+        bloc.add(PlayCard(playerId: bloc.state.players[0].id, cards: [joker1]));
+        await Future.delayed(Duration.zero);
+        expect(bloc.state.cardsToDraw, equals(4));
+        expect(bloc.state.currentPlayerIndex, equals(1));
+
+        print('Après Alain : cardsToDraw = ${bloc.state.cardsToDraw}');
+        // Bob répond avec un joker aussi
+
+        bloc.add(PlayCard(playerId: bloc.state.players[1].id, cards: [joker2]));
+        await Future.delayed(Duration.zero);
+        expect(bloc.state.cardsToDraw, equals(8));
+        expect(bloc.state.currentPlayerIndex, equals(2)); // → Claire
+        await Future.delayed(Duration.zero);
+
+
+        print('Après Bob : cardsToDraw = ${bloc.state.cardsToDraw}');
+
+        // Claire ne peut pas répondre, donc elle termine son tour
+        bloc.add(EndTurn());
+        await Future.delayed(Duration.zero);
+
+        print('Claire a maintenant : ${bloc.state.players[2].hand.length} cartes');
+
+        expect(bloc.state.players[2].hand.length, equals(8));
+    });
+
+    test('echec si deux cartes differentes', () async {
+      final bloc = CheckGameBloc();
+
+      bloc.add(StartGame(['Alice', 'Bob']));
+      await Future.delayed(Duration.zero);
+
+      final card1 = PlayingCard(suit: CardSuit.hearts, value: CardValue.five);
+      final card2 = PlayingCard(suit: CardSuit.clubs, value: CardValue.seven);
+      final topCard = PlayingCard(suit: CardSuit.diamonds, value: CardValue.five);
+
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [topCard],
+        players: [
+          bloc.state.players[0].copyWith(hand: [card1, card2]),
+          bloc.state.players[1],
+        ],
+      ));
+
+      bloc.add(PlayCard(playerId: bloc.state.players[0].id, cards: [card1, card2]));
+      await Future.delayed(Duration.zero);
+
+      // Les cartes ne doivent pas avoir été jouées (main toujours complète)
+      expect(bloc.state.players[0].hand.length, equals(2));
+      expect(bloc.state.discardPile.length, equals(1)); // la carte du dessus seulement
+    });
+
+
+    test('PlayCard - Bob prend leffet du joker dAlice et pioche 4 cartes', () async {
+      final bloc = CheckGameBloc();
+
+      // Étape 1: démarrer une partie avec Alice et Bob
+      bloc.add(StartGame(['Alice', 'Bob']));
+      await Future.delayed(Duration.zero);
+
+      // Étape 2: Préparation des cartes
+      final jokerCard = PlayingCard(suit: CardSuit.jokerRed, value: CardValue.joker);
+      final topCard = PlayingCard(suit: CardSuit.hearts, value: CardValue.five);
+      final bobInitialCard = PlayingCard(suit: CardSuit.hearts, value: CardValue.three);
+
+      // Générer un paquet de 20 cartes pour la pioche
+      final drawPile = List<PlayingCard>.generate(
+        20,
+            (index) => PlayingCard(
+          suit: CardSuit.clubs,
+          value: CardValue.values[index % CardValue.values.length],
+        ),
+      );
+
+      // Étape 3: Configuration de l'état initial
+
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [topCard],
+        drawPile: drawPile,
+        players: [
+          bloc.state.players[0].copyWith(hand: [jokerCard]),        // Alice
+          bloc.state.players[1].copyWith(hand: [bobInitialCard]),   // Bob
+        ],
+      ));
+
+      // Étape 4: Alice joue le joker
+      bloc.add(PlayCard(
+        playerId: bloc.state.players[0].id,
+        cards: [jokerCard],
+      ));
+
+      await Future.delayed(Duration.zero);
+
+      // Étape 5: Bob termine son tour (il n’a pas de joker, donc doit piocher)
+      bloc.add(EndTurn());
+
+
+      await Future.delayed(Duration.zero);
+
+      // Étape 6: Vérification
+      final bobFinalHand = bloc.state.players[1].hand;
+      print(bobFinalHand);
+      // 1 carte initiale + 4 piochées = 5
+      expect(bobFinalHand.length, equals(5));
+    });
+
+
+    test('Tour par tour sans joker ni 7', () async {
+      final bloc = CheckGameBloc();
+
+      // Initialisation
+      bloc.add(StartGame(['Alice', 'Bob', 'Claire']));
+      await Future.delayed(Duration.zero);
+
+      final cardA = PlayingCard(suit: CardSuit.hearts, value: CardValue.nine);
+      final cardB = PlayingCard(suit: CardSuit.hearts, value: CardValue.eight);
+      final cardC = PlayingCard(suit: CardSuit.hearts, value: CardValue.seven);
+      final topCard = PlayingCard(suit: CardSuit.hearts, value: CardValue.ten);
+
+      // État initial : tous les joueurs ont une seule carte jouable
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [topCard],
+        players: [
+          bloc.state.players[0].copyWith(hand: [cardA]),
+          bloc.state.players[1].copyWith(hand: [cardB]),
+          bloc.state.players[2].copyWith(hand: [cardC]),
+        ],
+      ));
+
+      // Alice joue
+      bloc.add(PlayCard(playerId: bloc.state.players[0].id, cards: [cardA]));
+      await Future.delayed(Duration.zero);
+      expect(bloc.state.currentPlayerIndex, equals(1));
+      expect(bloc.state.discardPile.last, equals(cardA));
+      expect(bloc.state.players[0].hand.length, equals(0));
+
+      // Bob joue
+      bloc.add(PlayCard(playerId: bloc.state.players[1].id, cards: [cardB]));
+      await Future.delayed(Duration.zero);
+      expect(bloc.state.currentPlayerIndex, equals(2));
+      expect(bloc.state.discardPile.last, equals(cardB));
+      expect(bloc.state.players[1].hand.length, equals(0));
+
+      // Claire joue
+      bloc.add(PlayCard(playerId: bloc.state.players[2].id, cards: [cardC]));
+      await Future.delayed(Duration.zero);
+      expect(bloc.state.currentPlayerIndex, equals(0));
+      expect(bloc.state.discardPile.last, equals(cardC));
+      expect(bloc.state.players[2].hand.length, equals(0));
+    });
+
+    test('Ace (As) skip next player is skipped', () async {
+      final bloc = CheckGameBloc();
+      bloc.add(StartGame(['Alice', 'Bob', 'Claire']));
+      await Future.delayed(Duration.zero);
+
+      final ace = PlayingCard(suit: CardSuit.hearts, value: CardValue.ace);
+      final top  = PlayingCard(suit: CardSuit.hearts, value: CardValue.five);
+
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [top],
+        players: [
+          bloc.state.players[0].copyWith(hand: [ace]), // Alice
+          bloc.state.players[1],                        // Bob
+          bloc.state.players[2],                        // Claire
+        ],
+        currentPlayerIndex: 0,
+      ));
+
+      // Alice joue As => Bob est sauté, tour → Claire
+      bloc.add(PlayCard(playerId: bloc.state.players[0].id, cards: [ace]));
+      await Future.delayed(Duration.zero);
+
+      expect(bloc.state.currentPlayerIndex, equals(2)); // Claire
+    });
+
+    test('Jack on Jack second imposed suit replaces the first', () async {
+      final bloc = CheckGameBloc();
+      bloc.add(StartGame(['Alice','Bob','Claire']));
+      await Future.delayed(Duration.zero);
+
+      final jack1 = PlayingCard(suit: CardSuit.clubs,    value: CardValue.jack);
+      final jack2 = PlayingCard(suit: CardSuit.spades,   value: CardValue.jack);
+      final top   = PlayingCard(suit: CardSuit.clubs, value: CardValue.five);
+
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [top],
+        players: [
+          bloc.state.players[0].copyWith(hand: [jack1]),
+          bloc.state.players[1].copyWith(hand: [jack2]),
+          bloc.state.players[2],
+        ],
+        currentPlayerIndex: 0,
+      ));
+
+      // Alice impose ♣
+      bloc.add(PlayCard(playerId: bloc.state.players[0].id, cards: [jack1], imposedSuit: CardSuit.clubs));
+      await Future.delayed(Duration.zero);
+      expect(bloc.state.imposedSuit, equals(CardSuit.clubs));
+      expect(bloc.state.currentPlayerIndex, equals(1)); // Bob
+
+      // Bob impose ♠ et remplace l'ancienne imposition
+      bloc.add(PlayCard(playerId: bloc.state.players[1].id, cards: [jack2], imposedSuit: CardSuit.spades));
+      await Future.delayed(Duration.zero);
+      expect(bloc.state.imposedSuit, equals(CardSuit.spades));
+      expect(bloc.state.currentPlayerIndex, equals(2)); // Claire
+    });
+
+    test('Stack 7s  +2 then +2  third player draws 4', () async {
+      final bloc = CheckGameBloc();
+      bloc.add(StartGame(['Alice','Bob','Claire']));
+      await Future.delayed(Duration.zero);
+
+      final sevenA = PlayingCard(suit: CardSuit.hearts, value: CardValue.seven);
+      final sevenB = PlayingCard(suit: CardSuit.clubs,  value: CardValue.seven);
+      final top    = PlayingCard(suit: CardSuit.hearts, value: CardValue.five);
+
+      final drawPile = List<PlayingCard>.generate(
+        30,
+            (i) => PlayingCard(suit: CardSuit.diamonds, value: CardValue.values[i % CardValue.values.length]),
+      );
+
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [top],
+        drawPile: drawPile,
+        players: [
+          bloc.state.players[0].copyWith(hand: [sevenA]),
+          bloc.state.players[1].copyWith(hand: [sevenB]),
+          bloc.state.players[2].copyWith(hand: []),
+        ],
+        currentPlayerIndex: 0,
+      ));
+
+      // Alice joue 7 (+2)
+      bloc.add(PlayCard(playerId: bloc.state.players[0].id, cards: [sevenA]));
+      await Future.delayed(Duration.zero);
+      expect(bloc.state.cardsToDraw, equals(2));
+      expect(bloc.state.currentPlayerIndex, equals(1));
+
+      // Bob enchaîne 7 (+2) → cumul 4
+      bloc.add(PlayCard(playerId: bloc.state.players[1].id, cards: [sevenB]));
+      await Future.delayed(Duration.zero);
+      expect(bloc.state.cardsToDraw, equals(4));
+      expect(bloc.state.currentPlayerIndex, equals(2));
+
+      // Claire ne contre pas : à son EndTurn, elle pioche 4 (pas de carte bonus)
+      bloc.add(EndTurn());
+      await Future.delayed(Duration.zero);
+      expect(bloc.state.players[2].hand.length, equals(4));
+    });
+
+    test('No playable card next player draws 1 and turn passes', () async {
+      final bloc = CheckGameBloc();
+      bloc.add(StartGame(['Alice','Bob']));
+      await Future.delayed(Duration.zero);
+
+      final top = PlayingCard(suit: CardSuit.hearts, value: CardValue.five);
+      // Bob ne peut pas jouer (ni même valeur, ni même couleur, ni 2)
+      final bobHand = [
+        PlayingCard(suit: CardSuit.clubs, value: CardValue.seven),
+      ];
+      final drawPile = List<PlayingCard>.generate(
+        5,
+            (i) => PlayingCard(suit: CardSuit.spades, value: CardValue.values[i % CardValue.values.length]),
+      );
+
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [top],
+        drawPile: drawPile,
+        players: [
+          bloc.state.players[0],
+          bloc.state.players[1].copyWith(hand: bobHand),
+        ],
+        currentPlayerIndex: 0,
+        cardsToDraw: 0,
+      ));
+
+      // Fin du tour d'Alice → c'est à Bob : il ne peut pas jouer ⇒ il pioche 1 et on passe à Alice
+      bloc.add(EndTurn());
+      await Future.delayed(Duration.zero);
+
+      expect(bloc.state.players[1].hand.length, equals(2)); // 1 + 1 piochée
+      expect(bloc.state.currentPlayerIndex, equals(1));
+    });
+
+    test('Two is wildcard can be played on any top card', () async {
+      final bloc = CheckGameBloc();
+      bloc.add(StartGame(['Alice','Bob']));
+      await Future.delayed(Duration.zero);
+
+      final two  = PlayingCard(suit: CardSuit.spades, value: CardValue.two);
+      final top  = PlayingCard(suit: CardSuit.hearts, value: CardValue.ten);
+
+      bloc.emit(bloc.state.copyWith(
+        discardPile: [top],
+        players: [
+          bloc.state.players[0].copyWith(hand: [two]),
+          bloc.state.players[1],
+        ],
+        currentPlayerIndex: 0,
+      ));
+
+      bloc.add(PlayCard(playerId: bloc.state.players[0].id, cards: [two]));
+      await Future.delayed(Duration.zero);
+
+      expect(bloc.state.discardPile.last, equals(two));
+      expect(bloc.state.currentPlayerIndex, equals(1));
+    });
 
 
   });

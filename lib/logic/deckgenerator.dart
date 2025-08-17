@@ -7,19 +7,18 @@ class DeckGenerator {
   static List<PlayingCard> generateFullDeck({bool includeJokers = true}) {
     final List<PlayingCard> deck = [];
 
-    for (final suit in CardSuit.values) {
-      if (suit == CardSuit.joker) continue;
-
+    for (final suit in [CardSuit.hearts, CardSuit.diamonds, CardSuit.clubs, CardSuit.spades]) {
       for (final value in CardValue.values) {
         if (value != CardValue.joker) {
           deck.add(PlayingCard(suit: suit, value: value));
         }
       }
     }
+
     // Ajouter les jokers (sans couleur)
     if (includeJokers) {
-      deck.add(const PlayingCard(suit: CardSuit.joker, value: CardValue.joker)); // Joker noir
-      deck.add(const PlayingCard(suit: CardSuit.joker, value: CardValue.joker)); // Joker rouge
+      deck.add(const PlayingCard(suit: CardSuit.jokerRed, value: CardValue.joker)); // Joker noir
+      deck.add(const PlayingCard(suit: CardSuit.jokerBlack, value: CardValue.joker)); // Joker rouge
     }
 
     return deck;

@@ -14,7 +14,7 @@ class StartGame extends CheckgamesEvent{
 class DrawCard extends CheckgamesEvent{
   final String playerId;
   final int count;
-  DrawCard({required this.playerId, this.count = 2});
+  DrawCard({required this.playerId, this.count = 1});
 }
 // un joueur pioche une carte
 
@@ -33,9 +33,8 @@ class PlayCard extends CheckgamesEvent {
   });
 }
 
-class EndTurn extends CheckgamesEvent{
-  final String playerId;
-  EndTurn({required this.playerId});
+class EndTurn extends CheckgamesEvent {
+  EndTurn();
 }
 // Passe au joueur suivant
 

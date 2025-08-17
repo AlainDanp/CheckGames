@@ -9,20 +9,47 @@ class RuleEngine {
     required PlayingCard topCard,
     CardSuit? imposedSuit,
   }) {
-    if (cardToPlay.value == CardValue.two) {
-      return true;
+    if (cardToPlay.value == CardValue.two) return true;
 
-      /// Vérifie si une carte peut être jouée sur une autre
-    }
+      bool isRed(CardSuit s) => s == CardSuit.hearts ||
+          s == CardSuit.diamonds || s == CardSuit.jokerRed;
+      bool isBlack(CardSuit s) => s == CardSuit.clubs ||
+          s == CardSuit.spades || s == CardSuit.jokerBlack;
 
-    /// S'il y a une couleur imposée (par le J précédent)
-    if (imposedSuit != null
-        && cardToPlay.suit == imposedSuit)
-      return true;
+      // Joker (rouge/noir) à jouer
+      if (cardToPlay.value == CardValue.joker) {
+        // Sous imposition : respecter le groupe de couleur
+        if (imposedSuit != null) {
+          return (isRed(imposedSuit)  && cardToPlay.suit == CardSuit.jokerRed) ||
+              (isBlack(imposedSuit) && cardToPlay.suit == CardSuit.jokerBlack);
+        }
 
-    /// sinon : même valeur ou même couleur
-    return cardToPlay.suit == topCard.suit || cardToPlay.value == topCard.value;
-  }
+        // Sur un Joker : Joker tjrs autorisé (peu importe la couleur)
+        if (topCard.value == CardValue.joker) return true;
+
+        // Sans imposition : Joker rouge sur couleur rouge, noir sur couleur noire
+        return (isRed(topCard.suit)  && cardToPlay.suit == CardSuit.jokerRed) ||
+            (isBlack(topCard.suit) && cardToPlay.suit == CardSuit.jokerBlack);
+      }
+      // Carte normale à jouer sur un Joker au-dessus :
+      if (topCard.value == CardValue.joker) {
+        // Si le Joker du dessus est rouge : seules les cartes rouges (ou un 2) passent
+        if (topCard.suit == CardSuit.jokerRed)  return isRed(cardToPlay.suit);
+        // Si le Joker du dessus est noir : seules les cartes noires (ou un 2) passent
+        if (topCard.suit == CardSuit.jokerBlack) return isBlack(cardToPlay.suit);
+      }
+      /// S'il y a une couleur imposée (par le J précédent)
+
+      if (imposedSuit != null) {
+        // Un Valet peut toujours se poser pour ré-imposer
+        if (cardToPlay.value == CardValue.jack) return true;
+        // Sinon, respecter la couleur imposée OU la même valeur que le dessus
+        return cardToPlay.suit == imposedSuit || cardToPlay.value == topCard.value;
+      }
+      /// sinon : même valeur ou même couleur
+        return cardToPlay.suit == topCard.suit || cardToPlay.value == topCard.value;
+      }
+
 
   /// Vérifie si une carte a un effet spécial
   static bool hasSpecialEffect(PlayingCard card) {

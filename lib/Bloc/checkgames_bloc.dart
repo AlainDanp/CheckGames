@@ -1,4 +1,4 @@
-import 'package:checkgames/models/card_suit.dart';
+import '../models/card_suit.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../models/player_card.dart';
 import '../models/playing_card.dart';
@@ -40,17 +40,25 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
 
     /// Jouer une carte si autorisé
     void _onPlayCard(PlayCard event, Emitter<CheckgamesState> emit) {
+
+      if (event.cards.isEmpty) return;
+      // Refuse si ce n’est pas le tour de ce player
+      if (state.players.isEmpty || state.players[state.currentPlayerIndex].id != event.playerId) {
+        return;
+      }
+
       final currentPlayer = state.players.firstWhere((p) => p.id == event.playerId);
       final cards = event.cards;
 
-      //  Vérifie que les cartes appartiennent au joueur
+      // Vérifie que les cartes appartiennent au joueur
       if (!cards.every((c) => currentPlayer.hand.contains(c))) return;
+      // Vérifie que toutes les cartes ont la même valeur
+      if (!cards.every((c) => c.value == cards.first.value)) return;
 
-      //  Vérifie que toutes les cartes ont la même valeur
-      final sameValue = cards.every((c) => c.value == cards.first.value);
-      if (!sameValue) return;
+      // final sameValue = cards.every((c) => c.value == cards.first.value);
+      // if (!sameValue) return;
 
-      //  La 1re carte doit être jouable (couleur, valeur, ou 2)
+      // La 1re carte doit être jouable
       final canPlay = RuleEngine.canPlayCard(
         cardToPlay: cards.first,
         topCard: state.discardPile.last,
@@ -58,54 +66,74 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       );
       if (!canPlay) return;
 
-      // 🧤 Mise à jour de la main du joueur
+      // Mise à jour de la main
       final updatedHand = [...currentPlayer.hand];
-      cards.forEach(updatedHand.remove);
-
-      final updatedPlayers = state.players.map((p) {
-        return p.id == currentPlayer.id
-            ? p.copyWith(hand: updatedHand)
-            : p;
-      }).toList();
-
-      // ♻️ Ajoute toutes les cartes jouées dans la pile
-      final updatedDiscardPile = [...state.discardPile, ...cards];
-
-      // 🔁 Gestion des effets spéciaux (uniquement sur la 1re carte)
-      int skip = 0;
-      int draw = 0;
-      CardSuit? imposedSuit;
-
-      final firstCard = cards.first;
-      switch (firstCard.value) {
-        case CardValue.ace:
-          skip = 1;
-          break;
-        case CardValue.seven:
-          draw = 2;
-          break;
-        case CardValue.joker:
-          draw = 4;
-          break;
-        case CardValue.jack:
-          imposedSuit = event.imposedSuit;
-          break;
-        default:
-          break;
+      // cards.forEach(updatedHand.remove);
+      for (final c in cards){
+        updatedHand.remove(c);
       }
 
-      // 🎯 Passe au joueur suivant (en tenant compte de skip)
+      final updatedPlayers = state.players.map((p) =>
+      p.id == currentPlayer.id ? p.copyWith(hand: updatedHand) : p).toList();
+
+      // Ajoute les cartes jouées dans la défausse
+      final updatedDiscardPile = [...state.discardPile, ...cards];
+
+      // Gestion des effets cumulés
+      int skip = 0;
+      int draw = state.cardsToDraw;
+      CardSuit? imposedSuit = state.imposedSuit;
+
+
+      for (final card in cards) {
+        switch (card.value) {
+          case CardValue.ace:
+            skip += 1;
+            break;
+          case CardValue.seven:
+            draw += 2  ;
+           // waitForResponse = true;
+            break;
+          case CardValue.joker:
+            draw += 4 ;
+           // waitForResponse = true;
+            break;
+          case CardValue.jack:
+            if(event.imposedSuit == null) return;
+            imposedSuit = event.imposedSuit;
+            // waitForResponse = true;
+            break;
+          default: break;
+        }
+      }
+
+      final first = cards.first;
+
+      if(first.value != CardValue.jack && state.imposedSuit != null){
+        imposedSuit = null;
+      }
+      print(' Nouvelle valeur de cardsToDraw: $draw');
+
       final nextIndex = (state.currentPlayerIndex + 1 + skip) % state.players.length;
+
+      final firstCard = cards.first;
+      final isStackable = firstCard.value == CardValue.seven || firstCard.value == CardValue.joker;
+      final nextPlayer = state.players[nextIndex];
+
+      final nextCanCounter = isStackable && nextPlayer.hand.any((c) => c.value == firstCard.value);
+      final waitForResponse = isStackable && nextCanCounter;
 
       emit(state.copyWith(
         players: updatedPlayers,
         discardPile: updatedDiscardPile,
         currentPlayerIndex: nextIndex,
-        skipCount: skip,
+        skipCount: 0,
         cardsToDraw: draw,
         imposedSuit: imposedSuit,
+        shouldWaitForResponse: waitForResponse,
       ));
     }
+
 
     /// piocher des cartes
     void _onDrawCard(DrawCard event, Emitter<CheckgamesState> emit){
@@ -129,77 +157,84 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
     }
     /// Passer au joueur suivant
     void _onEndTurn(EndTurn event, Emitter<CheckgamesState> emit) {
-      int nextIndex = (state.currentPlayerIndex + 1 + state.skipCount) % state.players.length;
+      final n = state.players.length;
+      if (n == 0) return;
+
+      final currentIndex = state.currentPlayerIndex;
+      final currentPlayer = state.players[currentIndex];
+
+      List<PlayingCard> drawPile = List.of(state.drawPile);
+      List<PlayingCard> discard  = List.of(state.discardPile);
+
+
+      // Recyclage si la pioche est vide
+      if (drawPile.isEmpty && discard.length > 1) {
+        final last = discard.removeLast();
+        drawPile = List<PlayingCard>.from(discard)..shuffle();
+        discard = [last];
+      }
+
+      //  Cas effet cumulé (7/joker) : la pioche s’applique au JOUEUR COURANT
+      if (state.cardsToDraw > 0) {
+        final drawn = <PlayingCard>[];
+        for (int i = 0; i < state.cardsToDraw && drawPile.isNotEmpty; i++) {
+          drawn.add(drawPile.removeAt(0));
+        }
+
+        final players = state.players.map((p) =>
+        p.id == currentPlayer.id ? p.copyWith(hand: [...p.hand, ...drawn]) : p
+        ).toList();
+
+        emit(state.copyWith(
+          players: players,
+          drawPile: drawPile,
+          discardPile: discard,
+          cardsToDraw: 0,                                  // reset
+          skipCount: 0,
+          imposedSuit: state.imposedSuit,
+          currentPlayerIndex: (currentIndex + 1) % n, // avance après pioche
+        ));
+        return; //  pas de "carte bonus" dans ce cas
+      }
+
+      //  Cas normal (pas d’effet en attente) : on regarde si le prochain peut jouer, sinon il pioche 1
+      final nextIndex = (currentIndex + 1 + state.skipCount) % n;
       final nextPlayer = state.players[nextIndex];
 
-      List<PlayingCard> drawPile = List<PlayingCard>.from(state.drawPile);
-      List<PlayingCard> discardPile = List<PlayingCard>.from(state.discardPile);
+      // Peut-il jouer ?
+      final canPlay = RuleEngine.playerHasPlayableCard(
+        hand: nextPlayer.hand,
+        topCard: state.discardPile.last,
+        imposedSuit: state.imposedSuit,
+      );
 
-      // Si deck vide, recycle discardPile sauf la carte visible
-      if (drawPile.isEmpty && discardPile.length > 1) {
-        final lastCard = discardPile.removeLast();
-        drawPile = List<PlayingCard>.from(discardPile)..shuffle();
-        discardPile = [lastCard];
+      PlayingCard? extraCard;
+      if (!canPlay && drawPile.isNotEmpty) {
+        extraCard = drawPile.removeAt(0);
       }
 
-      //  Gestion des effets de pioche (7 ou joker)
-      List<PlayingCard> drawnCards = [];
-      if (state.cardsToDraw > 0) {
-        for (int i = 0; i < state.cardsToDraw && drawPile.isNotEmpty; i++) {
-          drawnCards.add(drawPile.removeAt(0));
-        }
-      }
 
-      // Mise à jour du joueur avec les cartes piochées
       final updatedPlayers = state.players.map((p) {
-        if (p.id == nextPlayer.id && drawnCards.isNotEmpty) {
-          return p.copyWith(hand: [...p.hand, ...drawnCards]);
+        if (p.id == nextPlayer.id && extraCard != null) {
+          return p.copyWith(hand: [...p.hand, extraCard]);
         }
         return p;
       }).toList();
 
-      //  Nouvelle vérification : peut-il jouer après avoir pioché ?
-      final effectiveHand = nextPlayer.hand + drawnCards;
-      final canPlay = RuleEngine.playerHasPlayableCard(
-        hand: effectiveHand,
-        topCard: discardPile.last,
+      // Passe le tour APRÈS la pioche forcée
+      final newIndex =
+      (!canPlay) ? (nextIndex + 1) % n   // il a pioché → on saute à l’autre
+          : nextIndex;             // il peut jouer → on s’arrête sur lui
+
+
+      emit(state.copyWith(
+        players: updatedPlayers,
+        drawPile: drawPile,
+        cardsToDraw: 0,
+        skipCount: 0,
         imposedSuit: state.imposedSuit,
-      );
-
-      if (!canPlay) {
-        // Pioche supplémentaire si rien à jouer
-        PlayingCard? extraCard;
-        if (drawPile.isNotEmpty) {
-          extraCard = drawPile.removeAt(0);
-        }
-
-        final updatedAfterExtra = updatedPlayers.map((p) {
-          if (p.id == nextPlayer.id && extraCard != null) {
-            return p.copyWith(hand: [...p.hand, extraCard]);
-          }
-          return p;
-        }).toList();
-
-        emit(state.copyWith(
-          currentPlayerIndex: (nextIndex + 1) % state.players.length,
-          players: updatedAfterExtra,
-          drawPile: drawPile,
-          discardPile: discardPile,
-          cardsToDraw: 0,
-          skipCount: 0,
-          imposedSuit: null,
-        ));
-      } else {
-        emit(state.copyWith(
-          currentPlayerIndex: nextIndex,
-          players: updatedPlayers,
-          drawPile: drawPile,
-          discardPile: discardPile,
-          cardsToDraw: 0,
-          skipCount: 0,
-          imposedSuit: null,
-        ));
-      }
+        currentPlayerIndex: nextIndex,
+      ));
     }
 
 
