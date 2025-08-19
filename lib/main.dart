@@ -15,7 +15,7 @@ class CheckGamesApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (_) => CheckGameBloc()..add(StartGame(['Vous', 'Bot 1', 'Bot 2'])),
+      create: (_) => CheckGameBloc()..add(StartGame(['Vous', 'BOB', 'Paul'])),
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'CheckGames',

@@ -22,7 +22,35 @@ class _GamePageState extends State<GamePage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return BlocListener<CheckGameBloc, CheckgamesState>(
+        listenWhen: (prev, curr) => !prev.isGameOver && curr.isGameOver,
+        listener: (context, state) {
+          final order = state.finishingOrder.map((id) {
+            final p = state.players.firstWhere(
+                  (pl) => pl.id == id,
+              orElse: () => state.players.first, // fallback
+            );
+            return p.name;
+          }).toList();
+          showDialog(
+            context: context,
+            builder: (_) => AlertDialog(
+              title: const Text('Fin de partie'),
+              content: Text('Ordre : ${order.join(' > ')}'),
+              actions: [
+                TextButton(
+                  onPressed: () {
+                    Navigator.pop(context);
+                    context.read<CheckGameBloc>().add(RestartGame(keepPlayers: true));
+                  },
+                  child: const Text('Rejouer'),
+                ),
+              ],
+            ),
+          );
+        },
+
+    child:  Scaffold(
       appBar: AppBar(
         title: const Text('Table de jeu'),
         actions: [
@@ -166,6 +194,7 @@ class _GamePageState extends State<GamePage> {
           },
         ),
       ),
+    ),
     );
   }
 
@@ -197,6 +226,7 @@ class _GamePageState extends State<GamePage> {
         return;
       }
     }
+
 
     context.read<CheckGameBloc>().add(
       PlayCard(
@@ -230,6 +260,7 @@ class _GamePageState extends State<GamePage> {
     }
   }
 }
+
 
 class _DiscardPileView extends StatelessWidget {
   final PlayingCard? top;

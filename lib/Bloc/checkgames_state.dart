@@ -3,6 +3,8 @@ import '../models/player_card.dart';
 import '../models/card_suit.dart';
 import '../models/card_value.dart';
 
+enum GamePhase {normal, duel, finished}
+
 class CheckgamesState {
   final List<Player> players;
   final int currentPlayerIndex;
@@ -14,7 +16,10 @@ class CheckgamesState {
   // Effets spéciaux actifs
   final int skipCount;            // nombre de joueurs à sauter
   final int cardsToDraw;          // cartes à piocher par le suivant
-  final CardSuit? imposedSuit;    // couleur imposée par un Valet
+  final CardSuit? imposedSuit;  // couleur imposée par un Valet
+
+  final GamePhase phase;
+  final List<String> finishingOrder;
 
   const CheckgamesState({
     this.players = const [],
@@ -26,7 +31,11 @@ class CheckgamesState {
     this.cardsToDraw = 0,
     this.imposedSuit,
     this.shouldWaitForResponse = false,
+    this.phase = GamePhase.normal,
+    this.finishingOrder = const<String>[],
   });
+
+  static const Object _sentinel = Object();
 
   Player? get currentPlayer =>
       players.isNotEmpty && currentPlayerIndex < players.length
@@ -46,8 +55,15 @@ class CheckgamesState {
     int? skipCount,
     int? cardsToDraw,
     bool? shouldWaitForResponse,
-    CardSuit? imposedSuit,
+    //CardSuit? imposedSuit,
+    Object? imposedSuit = _sentinel,
+    GamePhase? phase,
+    List<String>? finishingOrder,
   }) {
+    final CardSuit? nextImposed = identical(imposedSuit, _sentinel)
+        ? this.imposedSuit
+        : imposedSuit as CardSuit?;
+
     return CheckgamesState(
       players: players ?? this.players,
       currentPlayerIndex: currentPlayerIndex ?? this.currentPlayerIndex,
@@ -56,7 +72,9 @@ class CheckgamesState {
       isGameOver: isGameOver ?? this.isGameOver,
       skipCount: skipCount ?? this.skipCount,
       cardsToDraw: cardsToDraw ?? this.cardsToDraw,
-      imposedSuit: imposedSuit ?? this.imposedSuit,
+      imposedSuit: nextImposed,
+      phase: phase ?? this.phase,
+      finishingOrder: finishingOrder ?? this.finishingOrder,
       shouldWaitForResponse: shouldWaitForResponse ?? this.shouldWaitForResponse,
     );
   }

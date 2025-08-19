@@ -115,8 +115,8 @@ class _Corner extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(rank, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700)),
-        Text(suit, style: const TextStyle(fontSize: 18)),
+        Text(rank, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+        Text(suit, style: const TextStyle(fontSize: 15)),
       ],
     );
   }

@@ -2,7 +2,7 @@ import '../models/card_suit.dart';
 import '../models/playing_card.dart';
 
 abstract class CheckgamesEvent{
-
+  const CheckgamesEvent();
 }
 
 class StartGame extends CheckgamesEvent{
@@ -44,3 +44,7 @@ class RestartGame extends CheckgamesEvent{
   RestartGame({this.keepPlayers = true});
 }
 // Redémarre une nouvelle partie
+
+class BotActionRequested extends CheckgamesEvent {
+  const BotActionRequested();
+}
