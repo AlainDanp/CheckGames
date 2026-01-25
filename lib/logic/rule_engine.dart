@@ -33,8 +33,11 @@ class RuleEngine {
               (isBlack(imposedSuit) && cardToPlay.suit == CardSuit.jokerBlack);
         }
 
-        // Sur un Joker : Joker tjrs autorisé (peu importe la couleur)
-        if (topCard.value == CardValue.joker) return true;
+        // Sur un Joker : respecter la couleur (rouge sur rouge, noir sur noir)
+        if (topCard.value == CardValue.joker) {
+          return (topCard.suit == CardSuit.jokerRed && cardToPlay.suit == CardSuit.jokerRed) ||
+                 (topCard.suit == CardSuit.jokerBlack && cardToPlay.suit == CardSuit.jokerBlack);
+        }
 
         // Sans imposition : Joker rouge sur couleur rouge, noir sur couleur noire
         return (isRed(topCard.suit)  && cardToPlay.suit == CardSuit.jokerRed) ||

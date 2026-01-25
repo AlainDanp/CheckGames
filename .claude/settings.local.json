@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze:*)",
+      "Bash(flutter pub get)",
+      "Bash(dir:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(flutter pub add:*)",
+      "Bash(dart run:*)",
+      "Bash(del \"\\\\?\\\\C:\\\\Users\\\\alain\\\\OneDrive\\\\Documents\\\\checkgames\\\\nul\")"
+    ]
+  }
+}

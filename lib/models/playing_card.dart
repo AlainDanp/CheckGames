@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart';
 import 'card_suit.dart';
 import 'card_value.dart';
 
+@immutable
 class PlayingCard {
   final CardSuit suit;
   final CardValue value;

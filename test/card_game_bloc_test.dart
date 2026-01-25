@@ -1,21 +1,18 @@
-import 'package:checkgame/logic/deckgenerator.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:bloc_test/bloc_test.dart';
 
 import 'package:checkgame/Bloc/checkgames_bloc.dart';
-import 'package:checkgame/Bloc/checkgames_state.dart';
 import 'package:checkgame/Bloc/checkgames_event.dart';
 import 'package:checkgame/models/playing_card.dart';
 import 'package:checkgame/models/card_value.dart';
 import 'package:checkgame/models/card_suit.dart';
-import 'package:checkgame/models/player_card.dart';
 import 'package:checkgame/logic/rule_engine.dart';
 
+import 'mock_repository.dart';
 
 void main() {
   group('Check - RestartGame', () {
     test('should reset game state and redistribute cards to existing players', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       // Étape 1 : Démarrer une partie avec 2 joueurs
       bloc.add(StartGame(['Alice', 'Bob']));
@@ -54,7 +51,7 @@ void main() {
       expect(newHands, isNot(equals(oldHands)));
     });
     test('EndTurn1 - player unable to play draws a card and turn passes', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       bloc.add(StartGame(['Alice', 'Bob']));
       await Future.delayed(Duration.zero);
@@ -100,7 +97,7 @@ void main() {
       expect(newState.imposedSuit, isNull);
     });
     test('EndTurn2 - next player can play, no draw, turn passes correctly', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       // Étape 1 : Démarrer une partie avec deux joueurs
       bloc.add(StartGame(['Alice', 'Bob']));
@@ -141,7 +138,7 @@ void main() {
     });
 
     test('PlayCard - Valet impose une couleur', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       // Démarrer la partie
       bloc.add(StartGame(['Alice', 'Bob']));
@@ -168,7 +165,7 @@ void main() {
       expect(newState.players[0].hand.contains(jackCard), isFalse);
     });
     test('PlayCard - 7 fait piocher 2 cartes au joueur suivant', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       bloc.add(StartGame(['Alice', 'Bob']));
       await Future.delayed(Duration.zero);
@@ -198,7 +195,7 @@ void main() {
     });
 
     test('PlayCard - Joker fait piocher 4 cartes au joueur suivant', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       bloc.add(StartGame(['Alice', 'Bob']));
       await Future.delayed(Duration.zero);
@@ -225,7 +222,7 @@ void main() {
 
     });
     test('PlayCard - Valet impose une couleur au joueur suivant', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       // Démarre une partie avec 2 joueurs
       bloc.add(StartGame(['Alice', 'Bob']));
@@ -280,7 +277,7 @@ void main() {
       expect(peutJouer2, isTrue);
     });
     test('Double coup', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       // Démarre une partie avec 2 joueurs
       bloc.add(StartGame(['Alice', 'Bob']));
@@ -318,7 +315,7 @@ void main() {
       expect(bloc.state.currentPlayerIndex, equals(1));
     });
     test('PlayCard - Double joker fait piocher' , () async {
-        final bloc = CheckGameBloc();
+        final bloc = CheckGameBloc(repository: MockRepository());
 
         bloc.add(StartGame(['Alain', 'Bob', 'Claire']));
         await Future.delayed(Duration.zero);
@@ -375,7 +372,7 @@ void main() {
     });
 
     test('echec si deux cartes differentes', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       bloc.add(StartGame(['Alice', 'Bob']));
       await Future.delayed(Duration.zero);
@@ -402,7 +399,7 @@ void main() {
 
 
     test('PlayCard - Bob prend leffet du joker dAlice et pioche 4 cartes', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       // Étape 1: démarrer une partie avec Alice et Bob
       bloc.add(StartGame(['Alice', 'Bob']));
@@ -456,7 +453,7 @@ void main() {
 
 
     test('Tour par tour sans joker ni 7', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
 
       // Initialisation
       bloc.add(StartGame(['Alice', 'Bob', 'Claire']));
@@ -500,7 +497,7 @@ void main() {
     });
 
     test('Ace (As) skip next player is skipped', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
       bloc.add(StartGame(['Alice', 'Bob', 'Claire']));
       await Future.delayed(Duration.zero);
 
@@ -525,7 +522,7 @@ void main() {
     });
 
     test('Jack on Jack second imposed suit replaces the first', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
       bloc.add(StartGame(['Alice','Bob','Claire']));
       await Future.delayed(Duration.zero);
 
@@ -557,7 +554,7 @@ void main() {
     });
 
     test('Stack 7s  +2 then +2  third player draws 4', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
       bloc.add(StartGame(['Alice','Bob','Claire']));
       await Future.delayed(Duration.zero);
 
@@ -600,7 +597,7 @@ void main() {
     });
 
     test('No playable card next player draws 1 and turn passes', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
       bloc.add(StartGame(['Alice','Bob']));
       await Future.delayed(Duration.zero);
 
@@ -634,7 +631,7 @@ void main() {
     });
 
     test('Two is wildcard can be played on any top card', () async {
-      final bloc = CheckGameBloc();
+      final bloc = CheckGameBloc(repository: MockRepository());
       bloc.add(StartGame(['Alice','Bob']));
       await Future.delayed(Duration.zero);
 

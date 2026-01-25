@@ -1,7 +1,6 @@
 import '../models/playing_card.dart';
 import '../models/player_card.dart';
 import '../models/card_suit.dart';
-import '../models/card_value.dart';
 
 enum GamePhase {normal, duel, finished}
 
@@ -20,6 +19,9 @@ class CheckgamesState {
 
   final GamePhase phase;
   final List<String> finishingOrder;
+  final String? lastChecksPlayerId;  // ID du dernier joueur qui a dit "CHECKS"
+  final bool isPaused; // Jeu en pause (pendant affichage de CHECKS par exemple)
+  final String? errorMessage; // Message d'erreur pour les manœuvres invalides
 
   const CheckgamesState({
     this.players = const [],
@@ -33,18 +35,24 @@ class CheckgamesState {
     this.shouldWaitForResponse = false,
     this.phase = GamePhase.normal,
     this.finishingOrder = const<String>[],
+    this.lastChecksPlayerId,
+    this.isPaused = false,
+    this.errorMessage,
   });
 
   static const Object _sentinel = Object();
 
   Player? get currentPlayer =>
-      players.isNotEmpty && currentPlayerIndex < players.length
+      players.isNotEmpty &&
+      currentPlayerIndex >= 0 &&
+      currentPlayerIndex < players.length
           ? players[currentPlayerIndex]
           : null;
 
-  bool isPlayerTurn(String playerId) =>
-      players.isNotEmpty &&
-          players[currentPlayerIndex].id == playerId;
+  bool isPlayerTurn(String playerId) {
+    final player = currentPlayer;
+    return player != null && player.id == playerId;
+  }
 
   CheckgamesState copyWith({
     List<Player>? players,
@@ -59,10 +67,21 @@ class CheckgamesState {
     Object? imposedSuit = _sentinel,
     GamePhase? phase,
     List<String>? finishingOrder,
+    Object? lastChecksPlayerId = _sentinel,
+    bool? isPaused,
+    Object? errorMessage = _sentinel,
   }) {
     final CardSuit? nextImposed = identical(imposedSuit, _sentinel)
         ? this.imposedSuit
         : imposedSuit as CardSuit?;
+
+    final String? nextChecksPlayerId = identical(lastChecksPlayerId, _sentinel)
+        ? this.lastChecksPlayerId
+        : lastChecksPlayerId as String?;
+
+    final String? nextErrorMessage = identical(errorMessage, _sentinel)
+        ? this.errorMessage
+        : errorMessage as String?;
 
     return CheckgamesState(
       players: players ?? this.players,
@@ -76,6 +95,9 @@ class CheckgamesState {
       phase: phase ?? this.phase,
       finishingOrder: finishingOrder ?? this.finishingOrder,
       shouldWaitForResponse: shouldWaitForResponse ?? this.shouldWaitForResponse,
+      lastChecksPlayerId: nextChecksPlayerId,
+      isPaused: isPaused ?? this.isPaused,
+      errorMessage: nextErrorMessage,
     );
   }
 }

@@ -1,0 +1,133 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ============================================================================
+    // HELPER FUNCTIONS
+    // ============================================================================
+
+    /// Vérifie si l'utilisateur est un joueur dans la room
+    function isPlayerInRoom(roomId) {
+      return exists(/databases/$(database)/documents/game_rooms/$(roomId)/players/$(request.auth.uid));
+    }
+
+    /// Vérifie si c'est le tour du joueur
+    function isPlayerTurn(roomId) {
+      return get(/databases/$(database)/documents/game_rooms/$(roomId)).data.currentPlayerId == request.auth.uid;
+    }
+
+    /// Vérifie si l'utilisateur est l'hôte de la room
+    function isHost(roomId) {
+      return get(/databases/$(database)/documents/game_rooms/$(roomId)).data.hostId == request.auth.uid;
+    }
+
+    // ============================================================================
+    // USERS COLLECTION
+    // ============================================================================
+
+    match /users/{userId} {
+      // Tout utilisateur authentifié peut créer son propre profil
+      allow create: if request.auth != null && request.auth.uid == userId;
+
+      // Seul le propriétaire peut lire et modifier son profil
+      allow read, update: if request.auth != null && request.auth.uid == userId;
+
+      // Personne ne peut supprimer (ou seulement l'utilisateur lui-même si nécessaire)
+      allow delete: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ============================================================================
+    // GAME ROOMS
+    // ============================================================================
+
+    match /game_rooms/{roomId} {
+      // Lecture: Tout utilisateur authentifié peut voir les rooms
+      allow read: if request.auth != null;
+
+      // Création: Tout utilisateur authentifié peut créer une room
+      allow create: if request.auth != null
+                    && request.resource.data.hostId == request.auth.uid;
+
+      // Mise à jour: Tout utilisateur authentifié peut mettre à jour
+      // (Pour rejoindre, quitter, et les transactions de jeu)
+      // Les champs critiques sont protégés par la logique applicative
+      allow update: if request.auth != null;
+
+      // Suppression: Seulement l'hôte peut supprimer la room
+      allow delete: if request.auth != null && isHost(roomId);
+
+      // ============================================================================
+      // PLAYERS SUB-COLLECTION
+      // ============================================================================
+
+      match /players/{playerId} {
+        // Lecture: Tout utilisateur authentifié peut voir les joueurs
+        allow read: if request.auth != null;
+
+        // Écriture: L'utilisateur peut créer/modifier son propre document
+        // OU l'hôte peut modifier n'importe quel joueur (pour l'initialisation du jeu)
+        // OU un joueur de la room peut modifier (pour les mises à jour pendant le jeu)
+        allow write: if request.auth != null
+                     && (request.auth.uid == playerId || isHost(roomId));
+      }
+
+      // ============================================================================
+      // GAME STATE SUB-COLLECTION
+      // ============================================================================
+
+      match /game_state/{stateId} {
+        // Lecture: Tous les joueurs de la room peuvent voir l'état public
+        allow read: if request.auth != null;
+
+        // Écriture: Seulement via transactions (par les joueurs de la room)
+        allow write: if request.auth != null && isPlayerInRoom(roomId);
+      }
+
+      // ============================================================================
+      // PLAYER HANDS SUB-COLLECTION (PRIVÉ)
+      // ============================================================================
+
+      match /player_hands/{playerId} {
+        // CRITIQUE: Chaque joueur ne voit QUE sa propre main
+        allow read: if request.auth != null && request.auth.uid == playerId;
+
+        // Écriture: Seulement via transactions (par les joueurs de la room)
+        // Le serveur (GameMasterService/GameActionService) peut créer et modifier
+        allow write: if request.auth != null && isPlayerInRoom(roomId);
+      }
+
+      // ============================================================================
+      // ACTIONS SUB-COLLECTION (LOG)
+      // ============================================================================
+
+      match /actions/{actionId} {
+        // Lecture: Tous les joueurs de la room peuvent voir l'historique
+        allow read: if request.auth != null && isPlayerInRoom(roomId);
+
+        // Création: Les joueurs peuvent logger leurs actions
+        allow create: if request.auth != null && isPlayerInRoom(roomId);
+
+        // Pas de mise à jour ni de suppression (log immutable)
+        allow update, delete: if false;
+      }
+    }
+
+    // ============================================================================
+    // CHAT MESSAGES
+    // ============================================================================
+
+    match /chat_messages/{roomId}/messages/{messageId} {
+      // Lecture: Les joueurs de la room peuvent lire les messages
+      allow read: if request.auth != null && isPlayerInRoom(roomId);
+
+      // Création: Les joueurs authentifiés peuvent envoyer des messages
+      // Le playerId dans le message doit correspondre à l'utilisateur authentifié
+      allow create: if request.auth != null
+                    && isPlayerInRoom(roomId)
+                    && request.resource.data.playerId == request.auth.uid;
+
+      // Pas de modification ni de suppression
+      allow update, delete: if false;
+    }
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "project_info": {
+    "project_number": "114628623792",
+    "project_id": "checkgames",
+    "storage_bucket": "checkgames.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:114628623792:android:4acaf64eddc5907022ea75",
+        "android_client_info": {
+          "package_name": "com.example.checkgames"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7rZ8MdgwPwG1YlMVUAJDvXd5b1GmEi9U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:114628623792:android:bfe8b3f1d281620922ea75",
+        "android_client_info": {
+          "package_name": "com.game.checkgame"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyB7rZ8MdgwPwG1YlMVUAJDvXd5b1GmEi9U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

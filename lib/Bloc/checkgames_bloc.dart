@@ -5,52 +5,70 @@ import '../models/playing_card.dart';
 import '../logic/deckgenerator.dart';
 import '../logic/rule_engine.dart';
 import '../models/card_value.dart';
+import '../repository/checkgame_repository.dart';
+import '../models/game_history.dart';
+import '../services/bot_strategy_service.dart';
+import '../services/game_settings_service.dart';
 
 import 'checkgames_event.dart';
 import 'checkgames_state.dart';
 
 class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
-    CheckGameBloc() : super(const CheckgamesState()){
+    final CheckgameRepository repository;
+
+    CheckGameBloc({required this.repository}) : super(const CheckgamesState()){
       on<StartGame>(_onStartGame);
       on<PlayCard>(_onPlayCard);
       on<DrawCard>(_onDrawCard);
       on<EndTurn>(_onEndTurn);
       on<RestartGame>(_onRestartGame);
-
       on<BotActionRequested>(_onBotAction);
+      on<SetPaused>(_onSetPaused);
     }
 
     ///Démarrage du jeu;
     void _onStartGame(StartGame event, Emitter<CheckgamesState> emit){
       final deck = DeckGenerator.generateFullDeck()..shuffle();
-      final player = event.playerNames.asMap().entries.map((entry){
-        final id = entry.key.toString();
-        final name = entry.value;
-        final hand = deck.sublist(id.length * 5, id.length * 5 + 5);
-        return Player(id: id, name: name, hand: hand);
-      }).toList();
 
-      final disard = [deck[deck.length - 1]];
-      final draw = deck.sublist(0, deck.length - 1);
+      final players = <Player>[];
+      for (var i = 0; i < event.playerNames.length; i++){
+        final name = event.playerNames[i];
+        final hand = deck.take(5).toList();
+        deck.removeRange(0, 5);
+        players.add(Player(id: '$i', name: name, hand: hand));
+      }
+
+      final first = _drawFirstNonSpecial(deck); // ci-dessous
+      final discard = [first];
+
+      final draw = List<PlayingCard>.from(deck);
 
       emit(CheckgamesState(
-        players: player,
+        players: players,
         drawPile: draw,
-        discardPile: disard,
+        discardPile: discard,
         currentPlayerIndex: 0,
+        skipCount: 0,
+        cardsToDraw: 0,
+        imposedSuit: null,
+        isGameOver: false,
         phase: GamePhase.normal,
         finishingOrder: const [],
       ));
+
       _maybeTriggerBot();
+
     }
 
     /// Jouer une carte si autorisé
     void _onPlayCard(PlayCard event, Emitter<CheckgamesState> emit) {
       if (state.players.isEmpty) return;
-      if (state.players[state.currentPlayerIndex].id != event.playerId) return;
-      if (event.cards.isEmpty) return;
 
-      final currentPlayer = state.players[state.currentPlayerIndex];
+      // Validation sécurisée de l'index
+      final currentPlayer = _getCurrentPlayer();
+      if (currentPlayer == null) return;
+      if (currentPlayer.id != event.playerId) return;
+      if (event.cards.isEmpty) return;
       final cards = event.cards;
 
       // toutes appartiennent ?
@@ -75,6 +93,12 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         // défausse
         final discard = [...state.discardPile, ...cards];
 
+        // Détecter si le joueur n'a plus qu'1 carte → "CHECKS!"
+        String? checksPlayerId;
+        if (newHand.length == 1) {
+          checksPlayerId = currentPlayer.id;
+        }
+
         // cumul
         int draw = state.cardsToDraw;
         for (final c in cards) {
@@ -91,6 +115,7 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
           cardsToDraw: draw,
           // imposition inchangée (si existait)
           skipCount: 0,
+          lastChecksPlayerId: checksPlayerId,
         ));
 
         _maybeTriggerBot();
@@ -109,8 +134,31 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         pendingDraw: state.cardsToDraw,
       );
 
-      if (!canPlay) return;
+      if (!canPlay) {
+        // Émettre un message d'erreur pour manœuvre invalide UNIQUEMENT pour le joueur humain (id = '0')
+        // ET uniquement pour les cartes normales (pas les cartes spéciales comme 2, J, 7, Joker, As)
+        if (event.playerId == '0') {
+          // Ne pas afficher le message pour les cartes spéciales
+          final isSpecialCard = first.value == CardValue.two ||
+                                 first.value == CardValue.jack ||
+                                 first.value == CardValue.seven ||
+                                 first.value == CardValue.joker ||
+                                 first.value == CardValue.ace;
 
+          if (!isSpecialCard) {
+            emit(state.copyWith(
+              errorMessage: 'Manœuvre impossible ! Cette carte ne peut pas être jouée ici.',
+            ));
+            // Réinitialiser le message après un court délai
+            Future.delayed(const Duration(milliseconds: 100), () {
+              if (!isClosed) {
+                emit(state.copyWith(errorMessage: null));
+              }
+            });
+          }
+        }
+        return;
+      }
 
 
       // mise à jour main
@@ -121,6 +169,9 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
 
       // défausse
       final discard = [...state.discardPile, ...cards];
+
+      // Détecter si le joueur n'a plus qu'1 carte → "CHECKS!"
+      final checksPlayerId = newHand.length == 1 ? currentPlayer.id : null;
 
       int skip = 0;
       int draw = 0;
@@ -147,42 +198,149 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         }
       }
 
-      // si une carte NON-J a été jouée ET qu’elle MATCHE la couleur imposée,
-      // on consomme l’imposition (elle a été respectée)
-      if (state.imposedSuit != null &&
-          first.value != CardValue.jack &&
-          first.suit == state.imposedSuit) {
-        imposed = null;
+      // Consommer l'imposition si elle a été respectée
+      if (state.imposedSuit != null && first.value != CardValue.jack) {
+        // Cas 1: Carte normale qui matche la couleur imposée
+        if (first.suit == state.imposedSuit) {
+          imposed = null;
+        }
+        // Cas 2: Deux (wildcard) - consomme toujours l'imposition
+        else if (first.value == CardValue.two) {
+          imposed = null;
+        }
+        // Cas 3: Joker de la bonne couleur
+        else if (first.value == CardValue.joker) {
+          final isRedImposed = state.imposedSuit == CardSuit.hearts ||
+                               state.imposedSuit == CardSuit.diamonds;
+          final isRedJoker = first.suit == CardSuit.jokerRed;
+          if ((isRedImposed && isRedJoker) || (!isRedImposed && !isRedJoker)) {
+            imposed = null;
+          }
+        }
       }
 
+      // Calculer le prochain joueur en sautant si un As a été joué
       final nextIndex = (state.currentPlayerIndex + 1 + skip) % state.players.length;
 
-      // victoire si main vide
-      bool over = false;
-      List<String> order = List.of(state.finishingOrder);
-      if (newHand.isEmpty) {
-        over = true;
+      // Cas spécial : fin du duel
+      if (state.phase == GamePhase.duel && newHand.isEmpty) {
+        List<String> order = List.of(state.finishingOrder);
         order.add(currentPlayer.id);
+
+        // L'autre joueur du duel finit automatiquement 2e
+        final activePlayers = _activePlayers(players, order);
+        if (activePlayers.length == 1) {
+          order.add(activePlayers.first.id);
+        }
+
+        // Sauvegarder l'historique et les stats
+        final playerNames = state.players.map((p) => p.name).toList();
+        repository.saveGameHistory(GameHistory(
+          date: DateTime.now(),
+          playerNames: playerNames,
+          finishingOrder: order,
+          hadDuel: true,
+        ));
+
+        // Sauvegarder les stats de chaque joueur
+        for (int i = 0; i < order.length; i++) {
+          final playerId = order[i];
+          final player = players.firstWhere((p) => p.id == playerId);
+          final position = i + 1;
+
+          repository.recordGameResult(
+            playerName: player.name,
+            position: position,
+          );
+        }
+
+        emit(state.copyWith(
+          players: players,
+          discardPile: discard,
+          currentPlayerIndex: state.currentPlayerIndex,
+          skipCount: 0,
+          cardsToDraw: draw,
+          imposedSuit: imposed,
+          isGameOver: true,
+          finishingOrder: order,
+          phase: GamePhase.finished,
+        ));
+        return;
+      }
+
+      // victoire si main vide
+      List<String> order = List.of(state.finishingOrder);
+      GamePhase nextPhase = state.phase;
+      bool gameOver = false;
+
+      if (newHand.isEmpty) {
+        order.add(currentPlayer.id);
+
+        // Joueurs encore actifs
+        final activePlayers = _activePlayers(players, order);
+
+        if (activePlayers.length == 1) {
+          // Dernier joueur → partie terminée
+          order.add(activePlayers.first.id);
+          gameOver = true;
+          nextPhase = GamePhase.finished;
+
+          // Sauvegarder l'historique et les stats
+          final playerNames = state.players.map((p) => p.name).toList();
+          repository.saveGameHistory(GameHistory(
+            date: DateTime.now(),
+            playerNames: playerNames,
+            finishingOrder: order,
+            hadDuel: false,
+          ));
+
+          // Sauvegarder les stats de chaque joueur
+          for (int i = 0; i < order.length; i++) {
+            final playerId = order[i];
+            final player = players.firstWhere((p) => p.id == playerId);
+            final position = i + 1;
+
+            repository.recordGameResult(
+              playerName: player.name,
+              position: position,
+            );
+          }
+        } else if (activePlayers.length == 2 && state.phase != GamePhase.duel) {
+          // Déclencher le duel
+          nextPhase = GamePhase.duel;
+        }
       }
 
       emit(state.copyWith(
         players: players,
         discardPile: discard,
-        currentPlayerIndex: over ? state.currentPlayerIndex : nextIndex, // si fin, on ne bouge plus
+        currentPlayerIndex: gameOver ? state.currentPlayerIndex : nextIndex,
         skipCount: 0,
         cardsToDraw: draw,
         imposedSuit: imposed,
-        isGameOver: over,
+        isGameOver: gameOver,
         finishingOrder: order,
+        phase: nextPhase,
+        lastChecksPlayerId: checksPlayerId,
       ));
 
-      if (!over) _maybeTriggerBot();
+      // Appeler _startDuel après emit si nécessaire
+      if (nextPhase == GamePhase.duel && state.phase != GamePhase.duel) {
+        final activePlayers = _activePlayers(players, order);
+        _startDuel(emit, activePlayers);
+      }
+
+      if (!gameOver) _maybeTriggerBot();
     }
 
     /// piocher des cartes
     void _onDrawCard(DrawCard event, Emitter<CheckgamesState> emit) {
-      final me = state.players.firstWhere((p) => p.id == event.playerId, orElse: () => state.players.first);
-      if (me.id != state.players[state.currentPlayerIndex].id) return; // pas son tour
+      // Validation sécurisée de l'index
+      final currentPlayer = _getCurrentPlayer();
+      if (currentPlayer == null) return;
+
+      // Vérifier que c'est bien le joueur qui demande à piocher
+      if (currentPlayer.id != event.playerId) return; // pas son tour
 
       // si cumulus actif, ignorer DrawCard manuel (la pioche se fait dans EndTurn)
       if (state.cardsToDraw > 0) return;
@@ -191,7 +349,7 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       final drawPile = List<PlayingCard>.from(state.drawPile);
       final drawn = <PlayingCard>[];
 
-      // recycle si vide
+      // Recycler la défausse si la pioche est vide
       var discard = List<PlayingCard>.from(state.discardPile);
       if (drawPile.isEmpty && discard.length > 1) {
         final top = discard.removeLast();
@@ -199,12 +357,13 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         discard = [top];
       }
 
+      // Piocher autant de cartes que possible (peut être moins si pas assez)
       for (int i = 0; i < count && drawPile.isNotEmpty; i++) {
         drawn.add(drawPile.removeAt(0));
       }
 
       final players = state.players.map((p) {
-        if (p.id == me.id) {
+        if (p.id == currentPlayer.id) {
           return p.copyWith(hand: [...p.hand, ...drawn]);
         }
         return p;
@@ -230,21 +389,24 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       if (n == 0) return;
 
       final currentIndex = state.currentPlayerIndex;
+      // Validation sécurisée de l'index
+      if (currentIndex < 0 || currentIndex >= n) return;
       final currentPlayer = state.players[currentIndex];
 
       var drawPile = List<PlayingCard>.from(state.drawPile);
       var discard  = List<PlayingCard>.from(state.discardPile);
 
-      // Recyclage si la pioche est vide
+      // Recycler la défausse si la pioche est vide
       if (drawPile.isEmpty && discard.length > 1) {
         final top = discard.removeLast();
         drawPile = List.of(discard)..shuffle();
         discard = [top];
       }
 
-      //  Cas effet cumulé (7/joker) : la pioche s’applique au JOUEUR COURANT
+      //  Cas effet cumulé (7/joker) : la pioche s'applique au JOUEUR COURANT
       if (state.cardsToDraw > 0) {
         final drawn = <PlayingCard>[];
+        // Piocher autant de cartes que possible (peut être moins si pas assez)
         for (int i = 0; i < state.cardsToDraw && drawPile.isNotEmpty; i++) {
           drawn.add(drawPile.removeAt(0));
         }
@@ -348,7 +510,7 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
 
       final updatedPlayers = players.map<Player>((p)  {
         final hand = deck.take(5).toList();
-        deck.removeRange(0, 5);
+        deck.removeRange(0, 5); // la main d'un joeur
         return p.copyWith(hand: hand);
       }).toList();
 
@@ -372,10 +534,14 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
     void _maybeTriggerBot() {
       if (state.players.isEmpty) return;
       if (state.currentPlayerIndex == 0) return; // joueur humain
-      // petite latence pour laisser l’UI respirer
-      Future.delayed(const Duration(milliseconds: 300), () {
-        // sécurité: re-vérifier que c'est toujours un bot
-        if (state.players.isNotEmpty && state.currentPlayerIndex != 0) {
+      if (state.isPaused) return; // Jeu en pause (CHECKS affiché)
+
+      // Délai selon la vitesse configurée dans les paramètres
+      final delayMs = GameSettingsService.instance.botDelayMs;
+
+      Future.delayed(Duration(milliseconds: delayMs), () {
+        // sécurité: re-vérifier que c'est toujours un bot et que le jeu n'est pas en pause
+        if (state.players.isNotEmpty && state.currentPlayerIndex != 0 && !state.isPaused) {
           add(const BotActionRequested());
         }
       });
@@ -383,93 +549,80 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
     // lib/Bloc/checkgames_bloc.dart (suite)
 
     void _onBotAction(BotActionRequested event, Emitter<CheckgamesState> emit) {
-      if (state.players.isEmpty) return;
-      final idx = state.currentPlayerIndex;
-      if (idx == 0) return; // pas un bot
-      final me = state.players[idx];
+      if (state.players.isEmpty || state.isGameOver) return;
 
-      // 1) S'il y a une pénalité en attente, le bot tente de contrer (7/joker); sinon il subit.
+      final idx = state.currentPlayerIndex;
+      if (idx == 0) return; // Sécurité : ne pas agir si c'est l'humain
+
+      final me = state.players[idx];
+      final strategy = BotStrategyService.instance;
+
+      // --- 1) GESTION DES ATTAQUES (7 / JOKER) ---
       if (state.cardsToDraw > 0) {
-        final canCounter = me.hand.any((c) =>
-        (c.value == CardValue.seven) || (c.value == CardValue.joker));
-        if (canCounter) {
-          // joue un 7 en priorité, sinon un joker
-          final seven = me.hand.firstWhere(
-                (c) => c.value == CardValue.seven,
-            orElse: () => const PlayingCard(suit: CardSuit.hearts, value: CardValue.ace), // dummy
-          );
-          if (seven.value == CardValue.seven &&
-              RuleEngine.canPlayCard(
-                cardToPlay: seven,
-                topCard: state.discardPile.last,
-                imposedSuit: state.imposedSuit,
-              )) {
-            add(PlayCard(playerId: me.id, cards: [seven]));
-            return;
-          }
-          final anyJoker = me.hand.firstWhere(
-                (c) => c.value == CardValue.joker,
-            orElse: () => const PlayingCard(suit: CardSuit.hearts, value: CardValue.ace),
-          );
-          if (anyJoker.value == CardValue.joker &&
-              RuleEngine.canPlayCard(
-                cardToPlay: anyJoker,
-                topCard: state.discardPile.last,
-                imposedSuit: state.imposedSuit,
-              )) {
-            add(PlayCard(playerId: me.id, cards: [anyJoker]));
-            return;
-          }
+        // Le bot utilise la stratégie pour décider s'il contre
+        final counter = strategy.decideCounterAttack(
+          hand: me.hand,
+          topCard: state.discardPile.last,
+          imposedSuit: state.imposedSuit,
+          cardsToDraw: state.cardsToDraw,
+        );
+
+        if (counter != null) {
+          add(PlayCard(playerId: me.id, cards: [counter]));
+          return;
         }
-        // ne peut pas contrer → subir la pioche (EndTurn appliquera cardsToDraw)
-        add(EndTurn());
+
+        // Il ne peut pas ou ne veut pas contrer -> il subit la punition
+        add(EndTurn(playerId: me.id));
         return;
       }
 
-      // 2) Liste des cartes jouables
+      // --- 2) ANALYSE DES CARTES JOUABLES (HORS ATTAQUE) ---
       final top = state.discardPile.last;
       final playable = me.hand.where((c) =>
-          RuleEngine.canPlayCard(cardToPlay: c, topCard: top, imposedSuit: state.imposedSuit)
+          RuleEngine.canPlayCard(
+              cardToPlay: c,
+              topCard: top,
+              imposedSuit: state.imposedSuit
+          )
       ).toList();
 
       if (playable.isEmpty) {
-        // Règle: pas de coup → le bot passe son tour (EndTurn gère la pioche 1 et avance)
-        add(EndTurn());
+        // Le bot pioche une carte
+        add(DrawCard(playerId: me.id, count: 1));
         return;
       }
 
-      // 3) Double coup : s'il a plusieurs cartes de même valeur, il essaie de toutes les jouer
-      List<PlayingCard> toPlay = [playable.first];
-      final value = toPlay.first.value;
-      final sameValueRest = me.hand.where((c) => c.value == value && c != toPlay.first).toList();
-      if (sameValueRest.isNotEmpty) {
-        // attention: la 1re doit être jouable; les suivantes suivent par valeur
-        toPlay = [toPlay.first, ...sameValueRest];
-      }
+      // --- 3) STRATÉGIE DE JEU (SÉLECTION selon la difficulté) ---
+      final selected = strategy.selectCardToPlay(
+        hand: me.hand,
+        playableCards: playable,
+        allPlayers: state.players,
+        currentPlayerIndex: idx,
+      );
 
-      // 4) Si la 1re est un Valet → choisir une couleur à imposer (celle où il a le plus de cartes)
+      // --- 4) GESTION DES DOUBLES (selon la difficulté) ---
+      final toPlay = strategy.decideMultipleCards(
+        selectedCard: selected,
+        hand: me.hand,
+      );
+
+      // --- 5) CHOIX DE LA COULEUR (VALET - selon la difficulté) ---
       CardSuit? imposed;
-      if (value == CardValue.jack) {
-        imposed = _bestSuitToImpose(me.hand);
+      if (selected.value == CardValue.jack) {
+        imposed = strategy.selectImposedSuit(
+          hand: me.hand,
+          allPlayers: state.players,
+          currentPlayerIndex: idx,
+        );
       }
 
-      add(PlayCard(playerId: me.id, cards: toPlay, imposedSuit: imposed));
-    }
-
-    CardSuit _bestSuitToImpose(List<PlayingCard> hand) {
-      final counts = <CardSuit, int>{
-        CardSuit.hearts: 0, CardSuit.diamonds: 0, CardSuit.clubs: 0, CardSuit.spades: 0,
-      };
-      for (final c in hand) {
-        if (counts.containsKey(c.suit)) {
-          counts[c.suit] = (counts[c.suit] ?? 0) + 1;
-        }
-      }
-      // choisir la couleur max; fallback ♥
-      CardSuit suit = CardSuit.hearts;
-      int best = -1;
-      counts.forEach((s, n) { if (n > best) { best = n; suit = s; }});
-      return suit;
+      // --- 6) ACTION FINALE ---
+      add(PlayCard(
+          playerId: me.id,
+          cards: toPlay,
+          imposedSuit: imposed
+      ));
     }
     List<Player> _activePlayers(List<Player> all, List<String> finishedIds) {
       return all.where((p) => !finishedIds.contains(p.id)).toList();
@@ -488,7 +641,9 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         return p.copyWith(hand: const []); // ils ont déjà terminé
       }).toList();
 
-      final discard = [deck.removeAt(0)];
+      // Utiliser une carte non-spéciale pour commencer le duel
+      final firstCard = _drawFirstNonSpecial(deck);
+      final discard = [firstCard];
       final firstIndex = updated.indexWhere((p) => p.id == playersInDuel.first.id);
 
       emit(state.copyWith(
@@ -513,9 +668,29 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
             c.value != CardValue.joker) {
           return c;
         }
-        // sinon on met la carte au fond
+        // Remettre la carte spéciale au fond du deck
+        deck.add(c);
       }
       // fallback (au cas où)
       return PlayingCard(suit: CardSuit.hearts, value: CardValue.five);
     }
+
+  /// Récupère le joueur courant de manière sécurisée avec validation d'index
+  Player? _getCurrentPlayer() {
+    if (state.players.isEmpty) return null;
+    if (state.currentPlayerIndex < 0 || state.currentPlayerIndex >= state.players.length) {
+      return null;
+    }
+    return state.players[state.currentPlayerIndex];
+  }
+
+  /// Met le jeu en pause ou le reprend
+  void _onSetPaused(SetPaused event, Emitter<CheckgamesState> emit) {
+    emit(state.copyWith(isPaused: event.isPaused));
+
+    // Si on reprend le jeu, relancer le bot si c'est son tour
+    if (!event.isPaused) {
+      _maybeTriggerBot();
+    }
+  }
 }

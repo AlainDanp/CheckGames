@@ -7,18 +7,40 @@ class DeckGenerator {
   static List<PlayingCard> generateFullDeck({bool includeJokers = true}) {
     final List<PlayingCard> deck = [];
 
-    for (final suit in [CardSuit.hearts, CardSuit.diamonds, CardSuit.clubs, CardSuit.spades]) {
+    // Ne pas inclure les jokers ici
+    const normalSuits = [
+      CardSuit.hearts, CardSuit.diamonds, CardSuit.clubs, CardSuit.spades,
+    ];
+
+    for (final suit in normalSuits) {
       for (final value in CardValue.values) {
-        if (value != CardValue.joker) {
-          deck.add(PlayingCard(suit: suit, value: value));
-        }
+        if (value == CardValue.joker) continue;
+        deck.add(PlayingCard(suit: suit, value: value));
       }
     }
 
     // Ajouter les jokers (sans couleur)
     if (includeJokers) {
-      deck.add(const PlayingCard(suit: CardSuit.jokerRed, value: CardValue.joker)); // Joker noir
-      deck.add(const PlayingCard(suit: CardSuit.jokerBlack, value: CardValue.joker)); // Joker rouge
+      deck.add(const PlayingCard(suit: CardSuit.jokerRed,   value: CardValue.joker));
+      deck.add(const PlayingCard(suit: CardSuit.jokerBlack, value: CardValue.joker));
+    }
+
+    // Vérification stricte : lancer une exception si doublons détectés
+    if (!_checkUnique(deck)) {
+      throw StateError(
+        'ERREUR CRITIQUE: Le deck contient des doublons! '
+        'Nombre de cartes: ${deck.length}, '
+        'Nombre de cartes uniques: ${deck.toSet().length}'
+      );
+    }
+
+    // Vérifier le nombre de cartes attendu
+    final expectedCount = includeJokers ? 54 : 52;
+    if (deck.length != expectedCount) {
+      throw StateError(
+        'ERREUR CRITIQUE: Nombre de cartes incorrect! '
+        'Attendu: $expectedCount, Obtenu: ${deck.length}'
+      );
     }
 
     return deck;
@@ -29,5 +51,48 @@ class DeckGenerator {
     final deck = generateFullDeck(includeJokers: includeJokers);
     deck.shuffle();
     return deck;
+  }
+
+  /// Vérifie l'unicité des cartes dans le deck
+  static bool _checkUnique(List<PlayingCard> cards) {
+    final seen = <String>{};
+    final duplicates = <String>[];
+
+    for (final c in cards) {
+      final key = '${c.suit.name}-${c.value.name}';
+      if (!seen.add(key)) {
+        duplicates.add(key);
+      }
+    }
+
+    if (duplicates.isNotEmpty) {
+      print('⚠️ DOUBLONS DÉTECTÉS: ${duplicates.join(', ')}');
+      return false;
+    }
+
+    return true;
+  }
+
+  /// Méthode de débogage pour vérifier le contenu du deck
+  static void debugDeck() {
+    final deck = generateFullDeck(includeJokers: true);
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('🃏 VÉRIFICATION DU DECK');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+    print('Nombre total de cartes: ${deck.length}');
+    print('Nombre de cartes uniques: ${deck.toSet().length}');
+
+    final groups = <CardSuit, List<PlayingCard>>{};
+    for (final card in deck) {
+      groups.putIfAbsent(card.suit, () => []).add(card);
+    }
+
+    print('\n📋 Répartition par couleur:');
+    groups.forEach((suit, cards) {
+      print('  ${suit.name}: ${cards.length} cartes');
+    });
+
+    print('\n✅ Le deck est valide: ${_checkUnique(deck) ? 'OUI' : 'NON'}');
+    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
   }
 }
