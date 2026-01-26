@@ -7,6 +7,7 @@ class PauseMenu extends StatefulWidget {
   final VoidCallback onQuit;
   final VoidCallback? onRestart; // Callback pour relancer
   final VoidCallback? onLeaveGame; // Callback pour quitter la partie (multi)
+  final VoidCallback? onStopGame; // Callback pour arrêter la partie (solo) et retourner au menu
   final bool isMultiplayer; // Indique si c'est une partie multi
   final bool isHost; // Indique si le joueur est l'hôte
 
@@ -16,6 +17,7 @@ class PauseMenu extends StatefulWidget {
     required this.onQuit,
     this.onRestart,
     this.onLeaveGame,
+    this.onStopGame,
     this.isMultiplayer = false,
     this.isHost = false,
   });
@@ -69,6 +71,25 @@ class _PauseMenuState extends State<PauseMenu> {
         print('🔍 Confirmation de sortie');
         await Future.delayed(const Duration(milliseconds: 50));
         widget.onLeaveGame?.call();
+      },
+    );
+  }
+
+  void _showStopGameConfirmation(BuildContext context) {
+    print('🔍 Affichage du dialogue de confirmation d\'arrêt');
+    _showConfirmationDialog(
+      context: context,
+      title: 'Arrêter la partie ?',
+      message: 'Voulez-vous vraiment arrêter la partie ?\n\n'
+          'Vous retournerez au menu principal.',
+      icon: Icons.stop_circle_outlined,
+      iconColor: Colors.red,
+      confirmText: 'Arrêter',
+      confirmColor: Colors.red.shade700,
+      onConfirm: () async {
+        print('🔍 Confirmation d\'arrêt de partie');
+        await Future.delayed(const Duration(milliseconds: 50));
+        widget.onStopGame?.call();
       },
     );
   }
@@ -442,7 +463,7 @@ class _PauseMenuState extends State<PauseMenu> {
                     }
                   },
                   icon: Icon(
-                    widget.isMultiplayer ? Icons.exit_to_app : Icons.home,
+                    widget.isMultiplayer ? Icons.exit_to_app : Icons.refresh,
                     color: widget.isMultiplayer ? Colors.red.shade300 : Colors.white70,
                   ),
                   label: Text(
@@ -465,6 +486,42 @@ class _PauseMenuState extends State<PauseMenu> {
                   ),
                 ),
               ),
+
+              // Bouton Arrêter la partie (solo uniquement)
+              if (!widget.isMultiplayer && widget.onStopGame != null) ...[
+                SizedBox(height: 12 * sizing.scaleFactor),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      AudioService.instance.playButtonClick();
+                      _showStopGameConfirmation(context);
+                    },
+                    icon: Icon(
+                      Icons.stop_circle_outlined,
+                      color: Colors.red.shade300,
+                    ),
+                    label: Text(
+                      'Arrêter la partie',
+                      style: TextStyle(
+                        fontSize: sizing.fontSize(18).clamp(16.0, 20.0),
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.red.shade300,
+                      padding: EdgeInsets.symmetric(vertical: 16 * sizing.scaleFactor),
+                      side: BorderSide(
+                        color: Colors.red.shade300,
+                        width: 2,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),

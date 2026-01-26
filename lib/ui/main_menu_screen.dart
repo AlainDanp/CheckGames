@@ -7,6 +7,7 @@ import '../repository/checkgame_repository.dart';
 import 'game_page.dart';
 import 'auth_screen.dart';
 import 'settings_screen.dart';
+import 'tutorial_screen.dart';
 import '../services/audio_service.dart';
 import '../services/game_settings_service.dart';
 
@@ -121,7 +122,28 @@ class MainMenuScreen extends StatelessWidget {
                     },
                   ),
 
-                  const SizedBox(height: 40),
+                  const SizedBox(height: 20),
+
+                  // Bouton Tutoriel
+                  _MenuButton(
+                    icon: Icons.school,
+                    label: 'TUTORIEL',
+                    subtitle: 'Apprendre les règles',
+                    gradient: LinearGradient(
+                      colors: [Colors.blue.shade600, Colors.blue.shade800],
+                    ),
+                    onPressed: () {
+                      AudioService.instance.playButtonClick();
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const TutorialScreen(),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 30),
 
                   // Bouton Paramètres
                   TextButton.icon(

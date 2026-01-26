@@ -7,7 +7,8 @@
       "Bash(firebase deploy:*)",
       "Bash(flutter pub add:*)",
       "Bash(dart run:*)",
-      "Bash(del \"\\\\?\\\\C:\\\\Users\\\\alain\\\\OneDrive\\\\Documents\\\\checkgames\\\\nul\")"
+      "Bash(del \"\\\\?\\\\C:\\\\Users\\\\alain\\\\OneDrive\\\\Documents\\\\checkgames\\\\nul\")",
+      "Bash(flutter build:*)"
     ]
   }
 }

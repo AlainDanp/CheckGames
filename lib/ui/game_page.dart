@@ -58,6 +58,21 @@ class _GamePageState extends State<GamePage> {
   bool _isShowingChecks = false; // Flag pour bloquer le jeu pendant l'affichage de CHECKS
   final GlobalKey _deckKey = GlobalKey(); // Key pour la position de la pioche
   Map<String, int> _playerHandSizes = {}; // Pour détecter quand un joueur pioche
+  bool _wasGameOver = false; // Pour détecter le redémarrage de la partie
+
+  /// Réinitialise toutes les variables de suivi pour une nouvelle partie
+  void _resetTrackingVariables() {
+    print('🔄 Réinitialisation des variables de suivi pour nouvelle partie');
+    _selected.clear();
+    _gameOverSheetShown = false;
+    _lastChecksPlayerIdShown = null;
+    _lastDiscardPileLength = null;
+    _previousPlayerIndex = null;
+    _skipNextBotAnimation = false;
+    _isShowingChecks = false;
+    _playerHandSizes.clear();
+    _wasGameOver = false;
+  }
 
   @override
   void initState() {
@@ -163,6 +178,9 @@ class _GamePageState extends State<GamePage> {
                   }
                   bloc.add(const SetPaused(false));
 
+                  // Réinitialiser les variables de suivi AVANT le restart
+                  _resetTrackingVariables();
+
                   try {
                     // Afficher un indicateur de chargement
                     scaffoldMessenger.showSnackBar(
@@ -226,6 +244,18 @@ class _GamePageState extends State<GamePage> {
                 }
               }
             : null,
+        onStopGame: !isMultiplayer
+            ? () {
+                print('🛑 Arrêt de la partie solo');
+                // Fermer l'overlay
+                overlayEntry.remove();
+                bloc.add(const SetPaused(false));
+                // Retourner au menu principal
+                if (mounted) {
+                  Navigator.of(context).popUntil((route) => route.isFirst);
+                }
+              }
+            : null,
         isMultiplayer: isMultiplayer,
         isHost: isHost,
       ),
@@ -262,6 +292,39 @@ class _GamePageState extends State<GamePage> {
   Widget build(BuildContext context) {
     return BlocListener<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
       listener: (context, state) {
+        // Détecter le redémarrage de la partie (isGameOver passe de true à false)
+        // ou quand la défausse est réinitialisée (taille beaucoup plus petite)
+        final isGameRestarting = (_wasGameOver && !state.isGameOver) ||
+            (_lastDiscardPileLength != null &&
+             state.discardPile.isNotEmpty &&
+             state.discardPile.length < _lastDiscardPileLength! - 5);
+
+        if (isGameRestarting) {
+          print('🔄 Détection redémarrage de partie - Réinitialisation des variables');
+          _resetTrackingVariables();
+
+          // Fermer le GameOverSheet s'il est affiché (pour les non-hôtes)
+          // On fait un simple pop pour fermer le modal (showModalBottomSheet)
+          if (Navigator.of(context).canPop()) {
+            Navigator.of(context).pop();
+          }
+
+          // Réinitialiser les valeurs de base après le reset
+          if (state.discardPile.isNotEmpty) {
+            _lastDiscardPileLength = state.discardPile.length;
+          }
+          if (state.players.isNotEmpty) {
+            _previousPlayerIndex = state.currentPlayerIndex;
+            for (final player in state.players) {
+              _playerHandSizes[player.id] = player.hand.length;
+            }
+          }
+          return; // Ne pas exécuter les animations de ce cycle
+        }
+
+        // Mettre à jour le flag _wasGameOver
+        _wasGameOver = state.isGameOver;
+
         // Détecter quand une carte est jouée
         if (state.players.isNotEmpty && state.discardPile.isNotEmpty) {
           final currentDiscardLength = state.discardPile.length;
@@ -296,8 +359,8 @@ class _GamePageState extends State<GamePage> {
           final previousSize = _playerHandSizes[player.id] ?? 0;
           final currentSize = player.hand.length;
 
-          if (currentSize > previousSize) {
-            // Le joueur a pioché des cartes
+          if (currentSize > previousSize && _lastDiscardPileLength != null) {
+            // Le joueur a pioché des cartes (seulement si ce n'est pas l'initialisation)
             final cardsDraw = currentSize - previousSize;
             WidgetsBinding.instance.addPostFrameCallback((_) {
               _animateDrawCards(player.id, cardsDraw);
@@ -327,25 +390,31 @@ class _GamePageState extends State<GamePage> {
                   if (widget.playerId != null && widget.playerId == widget.hostId && widget.roomId != null) {
                     // Multijoueur + Hôte : Relancer la partie
                     Navigator.pop(context); // Fermer le sheet
+                    _resetTrackingVariables(); // Réinitialiser les variables AVANT le restart
                     try {
                       final gameMaster = GameMasterService();
                       await gameMaster.restartGame(widget.roomId!);
-                      _gameOverSheetShown = false; // Reset pour pouvoir afficher à nouveau
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('✅ Partie relancée !')),
+                        const SnackBar(
+                          content: Text('✅ Partie relancée !'),
+                          backgroundColor: Colors.green,
+                        ),
                       );
                     } catch (e) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('❌ Erreur: $e')),
+                        SnackBar(
+                          content: Text('❌ Erreur: $e'),
+                          backgroundColor: Colors.red,
+                        ),
                       );
                     }
                   } else if (widget.playerId != null) {
-                    // Multijoueur + Non-hôte : Retour au menu
+                    // Multijoueur + Non-hôte : Retour au menu (car seul l'hôte peut relancer)
                     Navigator.of(context).popUntil((route) => route.isFirst);
                   } else {
                     // Solo : redémarrer la partie
                     Navigator.pop(context);
-                    _gameOverSheetShown = false;
+                    _resetTrackingVariables();
                     context.read<Bloc<CheckgamesEvent, CheckgamesState>>().add(RestartGame(keepPlayers: true));
                   }
                 },
@@ -355,8 +424,15 @@ class _GamePageState extends State<GamePage> {
         }
 
         // Réinitialiser le flag si la partie redémarre
+        // et fermer le modal GameOverSheet s'il est ouvert
         if (!state.isGameOver && _gameOverSheetShown) {
           _gameOverSheetShown = false;
+          // Fermer le GameOverSheet si ouvert
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted && Navigator.of(context).canPop()) {
+              Navigator.of(context).pop();
+            }
+          });
         }
 
         // Afficher "CHECKS!" quand un joueur n'a plus qu'une carte
