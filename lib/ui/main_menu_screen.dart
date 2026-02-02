@@ -1,34 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
-import '../Bloc/checkgames_bloc.dart';
-import '../Bloc/checkgames_event.dart';
-import '../Bloc/checkgames_state.dart';
 import '../repository/checkgame_repository.dart';
-import 'game_page.dart';
 import 'auth_screen.dart';
 import 'settings_screen.dart';
-import 'tutorial_screen.dart';
+import 'tutorial_selection_screen.dart';
+import 'solo_mode_selection_screen.dart';
 import '../services/audio_service.dart';
-import '../services/game_settings_service.dart';
-
-// Widget wrapper pour le mode solo
-class _SoloGameWrapper extends StatelessWidget {
-  final CheckgameRepository repository;
-
-  const _SoloGameWrapper({required this.repository});
-
-  @override
-  Widget build(BuildContext context) {
-    // Utiliser les paramètres pour générer les noms des joueurs
-    final playerNames = GameSettingsService.instance.generatePlayerNames();
-
-    return BlocProvider<Bloc<CheckgamesEvent, CheckgamesState>>(
-      create: (_) => CheckGameBloc(repository: repository)
-        ..add(StartGame(playerNames)),
-      child: const GamePage(), // playerId = null pour le mode solo
-    );
-  }
-}
 
 class MainMenuScreen extends StatelessWidget {
   final CheckgameRepository repository;
@@ -97,7 +73,7 @@ class MainMenuScreen extends StatelessWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => _SoloGameWrapper(repository: repository),
+                          builder: (_) => SoloModeSelectionScreen(repository: repository),
                         ),
                       );
                     },
@@ -137,7 +113,7 @@ class MainMenuScreen extends StatelessWidget {
                       Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const TutorialScreen(),
+                          builder: (_) => const TutorialSelectionScreen(),
                         ),
                       );
                     },

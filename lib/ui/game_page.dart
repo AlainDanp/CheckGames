@@ -89,7 +89,8 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _showChecksOverlay(String playerName) {
-    if (!mounted) return;
+    // Protection contre les appels multiples
+    if (!mounted || _isShowingChecks) return;
 
     // Jouer le son CHECKS
     AudioService.instance.playChecks();
@@ -264,6 +265,56 @@ class _GamePageState extends State<GamePage> {
     Overlay.of(context).insert(overlayEntry);
   }
 
+  /// Affiche une popup de confirmation pour quitter la partie
+  Future<bool> _showExitConfirmation() async {
+    if (!mounted) return false;
+
+    final result = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Row(
+          children: [
+            Icon(Icons.exit_to_app, color: Colors.red.shade600, size: 28),
+            const SizedBox(width: 12),
+            const Text('Quitter la partie ?'),
+          ],
+        ),
+        content: Text(
+          widget.roomId != null
+              ? 'Voulez-vous vraiment quitter cette partie en ligne ?\n\nVous abandonnerez la partie en cours.'
+              : 'Voulez-vous vraiment quitter cette partie ?\n\nVotre progression sera perdue.',
+          style: const TextStyle(fontSize: 15),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              AudioService.instance.playButtonClick();
+              Navigator.of(context).pop(false);
+            },
+            child: const Text('Annuler'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              AudioService.instance.playButtonClick();
+              Navigator.of(context).pop(true);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade600,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Quitter'),
+          ),
+        ],
+      ),
+    );
+
+    return result ?? false;
+  }
+
   void _showErrorMessage(String message) {
     if (!mounted) return;
 
@@ -436,9 +487,12 @@ class _GamePageState extends State<GamePage> {
         }
 
         // Afficher "CHECKS!" quand un joueur n'a plus qu'une carte
+        // Conditions: nouveau checks, pas déjà affiché, pas en train d'afficher, partie pas finie
         if (state.lastChecksPlayerId != null &&
             state.lastChecksPlayerId != _lastChecksPlayerIdShown &&
+            !_isShowingChecks &&
             !state.isGameOver) {
+          // Marquer immédiatement comme traité pour éviter les doublons
           _lastChecksPlayerIdShown = state.lastChecksPlayerId;
 
           final checksPlayer = state.players.firstWhere(
@@ -446,20 +500,12 @@ class _GamePageState extends State<GamePage> {
             orElse: () => state.players.first,
           );
 
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _showChecksOverlay(checksPlayer.name);
+          // Utiliser Future.microtask au lieu de addPostFrameCallback pour éviter les doublons
+          Future.microtask(() {
+            if (mounted && !_isShowingChecks) {
+              _showChecksOverlay(checksPlayer.name);
+            }
           });
-        }
-
-        // Réinitialiser le tracker si le joueur a pioché (plus de 2 cartes)
-        if (state.lastChecksPlayerId != null && _lastChecksPlayerIdShown != null) {
-          final player = state.players.firstWhere(
-            (p) => p.id == _lastChecksPlayerIdShown,
-            orElse: () => state.players.first,
-          );
-          if (player.hand.length > 2) {
-            _lastChecksPlayerIdShown = null;
-          }
         }
 
         // Afficher le message d'erreur si présent
@@ -568,21 +614,32 @@ class _GamePageState extends State<GamePage> {
           }
         }
 
-        return Scaffold(
-          body: SafeArea(
-            child: Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [Color(0xFF145A32), Color(0xFF0B3D2E)],
-                  begin: Alignment.topLeft, end: Alignment.bottomRight,
+        return PopScope(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, result) async {
+            if (didPop) return;
+
+            final shouldExit = await _showExitConfirmation();
+            if (shouldExit && mounted) {
+              Navigator.of(context).pop();
+            }
+          },
+          child: Scaffold(
+            body: SafeArea(
+              child: Container(
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [Color(0xFF145A32), Color(0xFF0B3D2E)],
+                    begin: Alignment.topLeft, end: Alignment.bottomRight,
+                  ),
                 ),
-              ),
-              child: OrientationBuilder(
-                builder: (context, orientation) {
-                  return orientation == Orientation.portrait
-                      ? _buildPortraitLayout(context, state, meIndex, me, isMyTurn, onPlay, onDeckTapOrDraw)
-                      : _buildLandscapeLayout(context, state, meIndex, me, isMyTurn, onPlay, onDeckTapOrDraw);
-                },
+                child: OrientationBuilder(
+                  builder: (context, orientation) {
+                    return orientation == Orientation.portrait
+                        ? _buildPortraitLayout(context, state, meIndex, me, isMyTurn, onPlay, onDeckTapOrDraw)
+                        : _buildLandscapeLayout(context, state, meIndex, me, isMyTurn, onPlay, onDeckTapOrDraw);
+                  },
+                ),
               ),
             ),
           ),
