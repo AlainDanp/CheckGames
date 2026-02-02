@@ -1,4 +1,11 @@
 import 'dart:io' show Platform;
+import 'dart:math';
+import 'package:checkgame/services/in_app_notification_service.dart';
+import 'package:checkgame/services/local_notification_service.dart';
+import 'package:checkgame/services/notification_service.dart';
+import 'package:checkgame/ui/solo_mode_selection_screen.dart';
+import 'package:checkgame/ui/arcade_mode_screen.dart';
+import 'package:checkgame/ui/survival_mode_screen.dart';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -20,13 +27,20 @@ import 'services/audio_service.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 
+/// Clé globale pour la navigation
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+/// Repository global pour les notifications
+late CheckgameRepository globalRepository;
+
 Future<void> main() async {
   WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  // Firebase is only supported on Android, iOS, and Web
-  // Skip initialization on Windows/Linux/macOS desktop platforms
-  if (!Platform.isWindows && !Platform.isLinux && !Platform.isMacOS) {
+  // Initialiser les notifications uniquement sur mobile
+  final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+
+  if (isMobile) {
     try {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
@@ -35,7 +49,23 @@ Future<void> main() async {
       print('Erreur Firebase: $e');
     }
   } else {
-    print('Firebase skipped on desktop platform (${Platform.operatingSystem})');
+    print('Firebase & Notifications skipped on ${Platform.operatingSystem}');
+  }
+
+  if (isMobile) {
+    try {
+      await LocalNotificationService.instance.init();
+      await LocalNotificationService.instance.requestPermission();
+      await NotificationService.instance.init();
+
+      // Configurer le callback pour la navigation
+      LocalNotificationService.onNotificationTap = _handleNotificationTap;
+
+      // Programmer les rappels toutes les 2h
+      await LocalNotificationService.instance.setupPeriodicReminders();
+    } catch (e) {
+      print('Erreur notifications: $e');
+    }
   }
 
   // Permettre toutes les orientations (portrait et paysage)
@@ -49,6 +79,7 @@ Future<void> main() async {
   // Initialiser le repository
   final repository = CheckgameRepository();
   await repository.init();
+  globalRepository = repository; // Stocker globalement pour les notifications
 
   // Initialiser les paramètres du jeu
   await GameSettingsService.instance.init();
@@ -62,21 +93,92 @@ Future<void> main() async {
   // Retirer le splash screen
   FlutterNativeSplash.remove();
 
+  // Assigner la clé de navigation aux services
+  InAppNotificationService.instance.navigatorKey = navigatorKey;
+
   runApp(MyApp(repository: repository));
 }
 
-class MyApp extends StatelessWidget {
-  final CheckgameRepository repository;
+/// Gère le tap sur une notification et navigue vers le bon écran
+void _handleNotificationTap(String payload) {
+  // Attendre que le navigator soit prêt
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    final navigator = navigatorKey.currentState;
+    if (navigator == null) return;
 
+    switch (payload) {
+      case 'solo':
+        navigator.push(MaterialPageRoute(
+          builder: (_) => SoloModeSelectionScreen(repository: globalRepository),
+        ));
+        break;
+
+      case 'arcade':
+        navigator.push(MaterialPageRoute(
+          builder: (_) => ArcadeModeScreen(repository: globalRepository),
+        ));
+        break;
+
+      case 'survival':
+        navigator.push(MaterialPageRoute(
+          builder: (_) => SurvivalModeScreen(repository: globalRepository),
+        ));
+        break;
+
+      case 'random':
+        // Choisir un mode aléatoire
+        final modes = ['solo', 'arcade', 'survival'];
+        final randomMode = modes[Random().nextInt(modes.length)];
+        _handleNotificationTap(randomMode);
+        break;
+
+      default:
+        // Par défaut, aller au menu solo
+        navigator.push(MaterialPageRoute(
+          builder: (_) => SoloModeSelectionScreen(repository: globalRepository),
+        ));
+    }
+  });
+}
+
+class MyApp extends StatefulWidget {
+  final CheckgameRepository repository;
   const MyApp({super.key, required this.repository});
 
   @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Reprogrammer les rappels quand l'app revient au premier plan
+    if (state == AppLifecycleState.resumed) {
+      LocalNotificationService.instance.refreshPeriodicReminders();
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    // Synchroniser la clé du navigator pour InAppNotificationService
     return MaterialApp(
+      navigatorKey: navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'checkgames',
       theme: AppTheme.lightTheme,
-      home: SplashScreen(nextScreen: MainMenuScreen(repository: repository)),
+      home: SplashScreen(nextScreen: MainMenuScreen(repository: widget.repository)),
       onGenerateRoute: (settings) {
         // Auth screen avec transition fade
         if (settings.name == '/auth') {
@@ -118,7 +220,6 @@ class MyApp extends StatelessWidget {
             );
           }
         }
-
         return null;
       },
     );

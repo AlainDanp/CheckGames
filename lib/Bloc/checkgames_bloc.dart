@@ -27,16 +27,16 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
     }
 
     /// Helper: Pioche des cartes avec recyclage de la défausse quand la pioche est presque vide
-    /// Le recyclage se fait uniquement quand il reste 0 ou 1 carte dans la pioche
+    /// Le recyclage se fait quand il reste 10 cartes ou moins dans la pioche
     /// Retourne les cartes piochées et met à jour drawPile et discardPile
     List<PlayingCard> _drawCardsWithRecycle({
       required int count,
       required List<PlayingCard> drawPile,
       required List<PlayingCard> discardPile,
     }) {
-      // Recycler la défausse si la pioche est vide ou n'a qu'une carte
-      if (drawPile.length <= 1 && discardPile.length > 1) {
-        final top = discardPile.removeLast();
+      // Recycler la défausse si la pioche a 10 cartes ou moins
+      if (drawPile.length <= 10 && discardPile.length > 1) {
+        final top = discardPile.removeLast(); // Garder la carte du dessus
         final toRecycle = List<PlayingCard>.from(discardPile);
         toRecycle.shuffle();
         drawPile.addAll(toRecycle);

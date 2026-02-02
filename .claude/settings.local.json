@@ -8,7 +8,11 @@
       "Bash(flutter pub add:*)",
       "Bash(dart run:*)",
       "Bash(del \"\\\\?\\\\C:\\\\Users\\\\alain\\\\OneDrive\\\\Documents\\\\checkgames\\\\nul\")",
-      "Bash(flutter build:*)"
+      "Bash(flutter build:*)",
+      "Bash(ls -la \"C:\\\\Users\\\\alain\\\\OneDrive\\\\Documents\\\\checkgames\\\\android\\\\app\\\\src\\\\main\\\\res\"\" 2>/dev/null || dir \"C:UsersalainOneDriveDocumentscheckgamesandroidappsrcmainres \")",
+      "Bash(copy:*)",
+      "Bash(flutter pub run:*)",
+      "Bash(flutter clean:*)"
     ]
   }
 }
