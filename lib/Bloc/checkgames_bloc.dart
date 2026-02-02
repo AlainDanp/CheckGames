@@ -26,6 +26,33 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       on<SetPaused>(_onSetPaused);
     }
 
+    /// Helper: Pioche des cartes avec recyclage de la défausse quand la pioche est presque vide
+    /// Le recyclage se fait uniquement quand il reste 0 ou 1 carte dans la pioche
+    /// Retourne les cartes piochées et met à jour drawPile et discardPile
+    List<PlayingCard> _drawCardsWithRecycle({
+      required int count,
+      required List<PlayingCard> drawPile,
+      required List<PlayingCard> discardPile,
+    }) {
+      // Recycler la défausse si la pioche est vide ou n'a qu'une carte
+      if (drawPile.length <= 1 && discardPile.length > 1) {
+        final top = discardPile.removeLast();
+        final toRecycle = List<PlayingCard>.from(discardPile);
+        toRecycle.shuffle();
+        drawPile.addAll(toRecycle);
+        discardPile.clear();
+        discardPile.add(top);
+      }
+
+      // Piocher les cartes demandées
+      final drawn = <PlayingCard>[];
+      for (int i = 0; i < count && drawPile.isNotEmpty; i++) {
+        drawn.add(drawPile.removeAt(0));
+      }
+
+      return drawn;
+    }
+
     ///Démarrage du jeu;
     void _onStartGame(StartGame event, Emitter<CheckgamesState> emit){
       final deck = DeckGenerator.generateFullDeck()..shuffle();
@@ -345,22 +372,15 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       // si cumulus actif, ignorer DrawCard manuel (la pioche se fait dans EndTurn)
       if (state.cardsToDraw > 0) return;
 
-      final count = event.count;
       final drawPile = List<PlayingCard>.from(state.drawPile);
-      final drawn = <PlayingCard>[];
+      final discard = List<PlayingCard>.from(state.discardPile);
 
-      // Recycler la défausse si la pioche est vide
-      var discard = List<PlayingCard>.from(state.discardPile);
-      if (drawPile.isEmpty && discard.length > 1) {
-        final top = discard.removeLast();
-        drawPile.addAll(discard..shuffle());
-        discard = [top];
-      }
-
-      // Piocher autant de cartes que possible (peut être moins si pas assez)
-      for (int i = 0; i < count && drawPile.isNotEmpty; i++) {
-        drawn.add(drawPile.removeAt(0));
-      }
+      // Utiliser le helper avec recyclage automatique
+      final drawn = _drawCardsWithRecycle(
+        count: event.count,
+        drawPile: drawPile,
+        discardPile: discard,
+      );
 
       final players = state.players.map((p) {
         if (p.id == currentPlayer.id) {
@@ -377,7 +397,7 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         discardPile: discard,
         // Fin immédiate du tour
         currentPlayerIndex: nextIndex,
-        // aucune modif d’imposition/cumul ici
+        // aucune modif d'imposition/cumul ici
       ));
 
       _maybeTriggerBot();
@@ -393,23 +413,18 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       if (currentIndex < 0 || currentIndex >= n) return;
       final currentPlayer = state.players[currentIndex];
 
-      var drawPile = List<PlayingCard>.from(state.drawPile);
-      var discard  = List<PlayingCard>.from(state.discardPile);
-
-      // Recycler la défausse si la pioche est vide
-      if (drawPile.isEmpty && discard.length > 1) {
-        final top = discard.removeLast();
-        drawPile = List.of(discard)..shuffle();
-        discard = [top];
-      }
+      final drawPile = List<PlayingCard>.from(state.drawPile);
+      final discard = List<PlayingCard>.from(state.discardPile);
 
       //  Cas effet cumulé (7/joker) : la pioche s'applique au JOUEUR COURANT
       if (state.cardsToDraw > 0) {
-        final drawn = <PlayingCard>[];
-        // Piocher autant de cartes que possible (peut être moins si pas assez)
-        for (int i = 0; i < state.cardsToDraw && drawPile.isNotEmpty; i++) {
-          drawn.add(drawPile.removeAt(0));
-        }
+        // Utiliser le helper avec recyclage automatique
+        final drawn = _drawCardsWithRecycle(
+          count: state.cardsToDraw,
+          drawPile: drawPile,
+          discardPile: discard,
+        );
+
         final players = state.players.map((p) =>
         p.id == currentPlayer.id ? p.copyWith(hand: [...p.hand, ...drawn]) : p
         ).toList();
@@ -425,7 +440,7 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         return; //  pas de "carte bonus" dans ce cas
       }
 
-      //  Cas normal (pas d’effet en attente) : on regarde si le prochain peut jouer, sinon il pioche 1
+      //  Cas normal (pas d'effet en attente) : on regarde si le prochain peut jouer, sinon il pioche 1
       final nextIndex = (currentIndex + 1) % n;
       final nextPlayer = state.players[nextIndex];
 
@@ -444,11 +459,16 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       }
 
       if (state.imposedSuit != null && !hasImposed) {
-        PlayingCard? extra;
-        if (drawPile.isNotEmpty) extra = drawPile.removeAt(0);
+        // Utiliser le helper avec recyclage automatique
+        final extraList = _drawCardsWithRecycle(
+          count: 1,
+          drawPile: drawPile,
+          discardPile: discard,
+        );
+
         final players = state.players.map((p) {
-          if (p.id == nextPlayer.id && extra != null) {
-            return p.copyWith(hand: [...p.hand, extra]);
+          if (p.id == nextPlayer.id && extraList.isNotEmpty) {
+            return p.copyWith(hand: [...p.hand, ...extraList]);
           }
           return p;
         }).toList();
@@ -470,15 +490,14 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         imposedSuit: state.imposedSuit,
       );
 
-      PlayingCard? extraCard;
-      if (!canPlay && drawPile.isNotEmpty) {
-        extraCard = drawPile.removeAt(0);
-      }
-
+      // Utiliser le helper avec recyclage automatique si ne peut pas jouer
+      final extraCards = !canPlay
+          ? _drawCardsWithRecycle(count: 1, drawPile: drawPile, discardPile: discard)
+          : <PlayingCard>[];
 
       final updatedPlayers = state.players.map((p) {
-        if (p.id == nextPlayer.id && extraCard != null) {
-          return p.copyWith(hand: [...p.hand, extraCard]);
+        if (p.id == nextPlayer.id && extraCards.isNotEmpty) {
+          return p.copyWith(hand: [...p.hand, ...extraCards]);
         }
         return p;
       }).toList();
