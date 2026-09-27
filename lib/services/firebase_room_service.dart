@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/app_logger.dart';
 
 class FirebaseRoomService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -257,13 +258,13 @@ class FirebaseRoomService {
       });
     } catch (e) {
       // Le joueur a peut-être déjà quitté la salle
-      print('Erreur lors de la mise à jour de présence: $e');
+      appLogger.w('Erreur mise à jour présence', error: e);
     }
   }
 
   // Quitter une partie en cours (pendant le jeu)
   Future<void> leaveActiveGame(String roomId, String playerId) async {
-    print('🚪 Joueur $playerId quitte la partie $roomId');
+    appLogger.d('Joueur quitte la partie');
 
     final roomRef = _firestore.collection('game_rooms').doc(roomId);
 
@@ -271,7 +272,7 @@ class FirebaseRoomService {
       final roomSnapshot = await transaction.get(roomRef);
 
       if (!roomSnapshot.exists) {
-        print('⚠️ La room n\'existe plus');
+        appLogger.w('La room n\'existe plus');
         return;
       }
 
@@ -292,6 +293,7 @@ class FirebaseRoomService {
         final gameState = gameStateSnapshot.data()!;
         final playerOrder = List<String>.from(gameState['playerOrder'] ?? []);
         final finishingOrder = List<String>.from(gameState['finishingOrder'] ?? []);
+        final currentPlayerId = roomData['currentPlayerId'] as String? ?? '';
 
         // Retirer le joueur du playerOrder
         playerOrder.remove(playerId);
@@ -303,18 +305,24 @@ class FirebaseRoomService {
 
         // Vérifier s'il ne reste qu'un seul joueur actif
         final activePlayers = playerOrder.where((id) => !finishingOrder.contains(id)).toList();
+        appLogger.d('Joueurs actifs restants: ${activePlayers.length}');
 
-        print('🎮 Joueurs actifs restants: ${activePlayers.length}');
+        // Si c'était son tour → passer au prochain joueur actif
+        if (currentPlayerId == playerId && activePlayers.isNotEmpty) {
+          transaction.update(roomRef, {
+            'currentPlayerId': activePlayers.first,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          appLogger.d('Tour passé à ${activePlayers.first} après départ de $playerId');
+        }
 
         if (activePlayers.length <= 1) {
-          print('🏆 Un seul joueur restant - Fin de partie');
+          appLogger.i('Un seul joueur restant — fin de partie');
 
-          // S'il reste un joueur, l'ajouter à finishingOrder comme gagnant
           if (activePlayers.length == 1) {
             finishingOrder.add(activePlayers.first);
           }
 
-          // Marquer le jeu comme terminé
           transaction.update(roomRef, {
             'status': 'finished',
             'isGameOver': true,
@@ -343,12 +351,12 @@ class FirebaseRoomService {
         final playersSnapshot = await roomRef.collection('players').get();
 
         if (playersSnapshot.docs.isEmpty) {
-          print('🗑️ Plus de joueurs - Suppression de la room');
+          appLogger.d('Plus de joueurs — suppression room');
           transaction.delete(roomRef);
         } else {
           // Transférer l'hôte au premier joueur restant
           final newHost = playersSnapshot.docs.first;
-          print('👑 Transfert de l\'hôte à ${newHost.id}');
+          appLogger.d('Transfert de l\'hôte');
           transaction.update(roomRef, {
             'hostId': newHost.id,
             'updatedAt': FieldValue.serverTimestamp(),
@@ -365,7 +373,7 @@ class FirebaseRoomService {
         });
       }
 
-      print('✅ Joueur $playerId a quitté la partie avec succès');
+      appLogger.i('Joueur a quitté la partie avec succès');
     });
   }
 
@@ -406,7 +414,7 @@ class FirebaseRoomService {
         // Supprimer si 0 joueurs
         if (currentPlayers <= 0) {
           await roomDoc.reference.delete();
-          print('Salle ${roomDoc.id} supprimee (0 joueurs)');
+          appLogger.d('Salle supprimée (0 joueurs)');
           continue;
         }
 
@@ -415,12 +423,12 @@ class FirebaseRoomService {
           final age = DateTime.now().difference(createdAt.toDate());
           if (age.inHours >= 2) {
             await roomDoc.reference.delete();
-            print('Salle ${roomDoc.id} supprimee (trop ancienne)');
+            appLogger.d('Salle supprimée (trop ancienne)');
           }
         }
       }
     } catch (e) {
-      print('Erreur nettoyage salles: $e');
+      appLogger.e('Erreur nettoyage salles', error: e);
     }
   }
 }

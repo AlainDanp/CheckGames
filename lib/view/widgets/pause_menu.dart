@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../utils/responsive_sizing.dart';
 import '../../services/audio_service.dart';
+import '../../utils/app_logger.dart';
 
 class PauseMenu extends StatefulWidget {
   final VoidCallback onResume;
@@ -38,7 +39,7 @@ class _PauseMenuState extends State<PauseMenu> {
   }
 
   void _showRestartConfirmation(BuildContext context) {
-    print('🔍 Affichage du dialogue de confirmation de relance');
+    appLogger.d('Affichage du dialogue de confirmation de relance');
     _showConfirmationDialog(
       context: context,
       title: 'Relancer la partie ?',
@@ -49,7 +50,7 @@ class _PauseMenuState extends State<PauseMenu> {
       confirmText: 'Relancer',
       confirmColor: Colors.orange.shade700,
       onConfirm: () async {
-        print('🔍 Confirmation de la relance');
+        appLogger.d('Confirmation de la relance');
         await Future.delayed(const Duration(milliseconds: 50));
         widget.onRestart?.call();
       },
@@ -57,7 +58,7 @@ class _PauseMenuState extends State<PauseMenu> {
   }
 
   void _showLeaveGameConfirmation(BuildContext context) {
-    print('🔍 Affichage du dialogue de confirmation de sortie');
+    appLogger.d('Affichage du dialogue de confirmation de sortie');
     _showConfirmationDialog(
       context: context,
       title: 'Quitter la partie ?',
@@ -68,7 +69,7 @@ class _PauseMenuState extends State<PauseMenu> {
       confirmText: 'Quitter',
       confirmColor: Colors.red.shade700,
       onConfirm: () async {
-        print('🔍 Confirmation de sortie');
+        appLogger.d('Confirmation de sortie');
         await Future.delayed(const Duration(milliseconds: 50));
         widget.onLeaveGame?.call();
       },
@@ -76,7 +77,7 @@ class _PauseMenuState extends State<PauseMenu> {
   }
 
   void _showStopGameConfirmation(BuildContext context) {
-    print('🔍 Affichage du dialogue de confirmation d\'arrêt');
+    appLogger.d('Affichage du dialogue de confirmation d\'arrêt');
     _showConfirmationDialog(
       context: context,
       title: 'Arrêter la partie ?',
@@ -87,7 +88,7 @@ class _PauseMenuState extends State<PauseMenu> {
       confirmText: 'Arrêter',
       confirmColor: Colors.red.shade700,
       onConfirm: () async {
-        print('🔍 Confirmation d\'arrêt de partie');
+        appLogger.d('Confirmation d\'arrêt de partie');
         await Future.delayed(const Duration(milliseconds: 50));
         widget.onStopGame?.call();
       },
@@ -161,7 +162,7 @@ class _PauseMenuState extends State<PauseMenu> {
                     Expanded(
                       child: OutlinedButton.icon(
                         onPressed: () {
-                          print('🔍 Annulation');
+                          appLogger.d('Annulation');
                           AudioService.instance.playButtonClick();
                           confirmationOverlay.remove();
                         },
@@ -225,7 +226,7 @@ class _PauseMenuState extends State<PauseMenu> {
     final sizing = context.sizing;
 
     // Debug: vérifier les conditions pour afficher le bouton
-    print('🔍 PauseMenu - isMultiplayer: ${widget.isMultiplayer}, isHost: ${widget.isHost}, onRestart != null: ${widget.onRestart != null}');
+    appLogger.d('PauseMenu - isMultiplayer: ${widget.isMultiplayer}, isHost: ${widget.isHost}, onRestart != null: ${widget.onRestart != null}');
 
     return Material(
       color: Colors.black.withOpacity(0.7),
@@ -392,7 +393,7 @@ class _PauseMenuState extends State<PauseMenu> {
                   width: double.infinity,
                   child: ElevatedButton.icon(
                     onPressed: () {
-                      print('🔍 Clic sur bouton Relancer la partie');
+                      appLogger.d('Clic sur bouton Relancer la partie');
                       AudioService.instance.playButtonClick();
                       _showRestartConfirmation(context);
                     },

@@ -1,6 +1,7 @@
 import 'package:checkgame/services/push_notification_service.dart';
 import 'in_app_notification_service.dart';
 import 'local_notification_service.dart';
+import '../utils/app_logger.dart';
 
 class NotificationService {
   static final NotificationService instance = NotificationService._();
@@ -21,7 +22,7 @@ class NotificationService {
       await _local.requestPermission();
       _initialized = true;
     } catch (e) {
-      print('Erreur init NotificationService: $e');
+      appLogger.e('Erreur init NotificationService', error: e);
     }
   }
 

@@ -12,7 +12,13 @@
       "Bash(ls -la \"C:\\\\Users\\\\alain\\\\OneDrive\\\\Documents\\\\checkgames\\\\android\\\\app\\\\src\\\\main\\\\res\"\" 2>/dev/null || dir \"C:UsersalainOneDriveDocumentscheckgamesandroidappsrcmainres \")",
       "Bash(copy:*)",
       "Bash(flutter pub run:*)",
-      "Bash(flutter clean:*)"
+      "Bash(flutter clean:*)",
+      "Bash(wc:*)",
+      "Bash(npm run:*)",
+      "Bash(npx eslint:*)",
+      "Bash(del:*)",
+      "Bash(./gradlew signingReport:*)",
+      "Bash(dart analyze *)"
     ]
   }
 }

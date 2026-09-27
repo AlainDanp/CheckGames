@@ -7,6 +7,7 @@ import '../models/playing_card.dart';
 import '../models/card_value.dart';
 import '../repository/checkgame_repository.dart';
 import '../services/game_action_service.dart';
+import '../utils/app_logger.dart';
 import 'checkgames_event.dart';
 import 'checkgames_state.dart';
 
@@ -43,7 +44,7 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
   })  : _actionService = actionService ?? GameActionService(),
         _firestore = firestore ?? FirebaseFirestore.instance,
         super(const CheckgamesState()) {
-    print('🎮 MultiplayerGameBloc: Initialisation pour room $roomId, joueur $playerId');
+    appLogger.d('MultiplayerGameBloc: Initialisation');
 
     // Ajouter les handlers pour les actions du joueur
     on<PlayCard>(_onPlayCard);
@@ -65,7 +66,7 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
 
   @override
   Future<void> close() {
-    print('🎮 MultiplayerGameBloc: Fermeture et annulation des listeners');
+    appLogger.d('MultiplayerGameBloc: Fermeture');
     _roomSubscription?.cancel();
     _gameStateSubscription?.cancel();
     _handSubscription?.cancel();
@@ -89,7 +90,7 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         .listen(
       (snapshot) {
         if (!snapshot.exists) {
-          print('⚠️ Room document n\'existe pas - Host probablement déconnecté');
+          appLogger.w('Room document introuvable — hôte déconnecté');
           // Émettre un état d'erreur pour indiquer que la partie est terminée
           emit(state.copyWith(
             errorMessage: '🚫 La partie a été fermée par l\'hôte',
@@ -101,30 +102,20 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         final data = snapshot.data()!;
         final newCurrentPlayerId = data['currentPlayerId'] as String;
 
-        print('🔥 ========================================');
-        print('🔥 FIREBASE UPDATE: Room data reçue');
-        print('🔥 currentPlayerId: $newCurrentPlayerId');
-        print('🔥 status: ${data['status']}');
-
         // Détecter les changements de tour
         if (_lastCurrentPlayerId != null && _lastCurrentPlayerId != newCurrentPlayerId) {
-          print('🔄 🔔 CHANGEMENT DE TOUR DÉTECTÉ !');
-          print('   Ancien joueur: $_lastCurrentPlayerId');
-          print('   Nouveau joueur: $newCurrentPlayerId');
-          print('   C\'est moi ? ${newCurrentPlayerId == playerId ? "OUI ✅" : "NON ❌"}');
+          final isMyTurn = newCurrentPlayerId == playerId;
+          appLogger.d('Changement de tour — mon tour: $isMyTurn');
         } else if (_lastCurrentPlayerId == null) {
-          print('🔄 Premier tour: $newCurrentPlayerId');
-          print('   C\'est moi ? ${newCurrentPlayerId == playerId ? "OUI ✅" : "NON ❌"}');
+          appLogger.d('Premier tour reçu');
         }
 
         _lastCurrentPlayerId = newCurrentPlayerId;
-        print('🔥 ========================================');
-
         _roomData = data;
         _tryEmitState();
       },
       onError: (error) {
-        print('❌ Erreur listener room: $error');
+        appLogger.e('Erreur listener room', error: error);
       },
     );
   }
@@ -140,15 +131,14 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         .listen(
       (snapshot) {
         if (!snapshot.exists) {
-          print('⚠️ Game state n\'existe pas encore');
+          appLogger.d('Game state pas encore disponible');
           return;
         }
-        print('🔥 Game state reçu');
         _gameStateData = snapshot.data();
         _tryEmitState();
       },
       onError: (error) {
-        print('❌ Erreur listener game state: $error');
+        appLogger.e('Erreur listener game state', error: error);
       },
     );
   }
@@ -164,10 +154,9 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         .listen(
       (snapshot) {
         if (!snapshot.exists) {
-          print('⚠️ Player hand n\'existe pas encore');
+          appLogger.d('Main joueur pas encore disponible');
           return;
         }
-        print('🔥 Player hand reçue');
         final data = snapshot.data()!;
         _myHand = (data['cards'] as List)
             .map((c) => _jsonToCard(c as Map<String, dynamic>))
@@ -175,7 +164,7 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         _tryEmitState();
       },
       onError: (error) {
-        print('❌ Erreur listener player hand: $error');
+        appLogger.e('Erreur listener player hand', error: error);
       },
     );
   }
@@ -190,17 +179,14 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         .snapshots()
         .listen(
       (snapshot) {
-        print('🔥 Players data reçue: ${snapshot.docs.length} joueurs');
         _playersData = {};
         for (final doc in snapshot.docs) {
-          final data = doc.data();
-          print('🔥   - Joueur ${doc.id}: handSize=${data['handSize']}, name=${data['playerName']}');
-          _playersData![doc.id] = data;
+          _playersData![doc.id] = doc.data();
         }
         _tryEmitState();
       },
       onError: (error) {
-        print('❌ Erreur listener players: $error');
+        appLogger.e('Erreur listener players', error: error);
       },
     );
   }
@@ -212,34 +198,24 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         _gameStateData == null ||
         _myHand == null ||
         _playersData == null) {
-      print('⏳ En attente de toutes les données Firebase...');
-      print('  - roomData: ${_roomData != null ? "✅" : "❌"}');
-      print('  - gameStateData: ${_gameStateData != null ? "✅" : "❌"}');
-      print('  - myHand: ${_myHand != null ? "✅" : "❌"}');
-      print('  - playersData: ${_playersData != null ? "✅" : "❌"}');
+      appLogger.d('En attente de toutes les données Firebase');
       return;
     }
 
     try {
-      print('🔄 Construction de l\'état depuis Firebase...');
-
       // Construire la liste des joueurs
       final playerOrder = List<String>.from(_gameStateData!['playerOrder']);
-      print('📋 PlayerOrder Firebase: $playerOrder');
-
       final players = <Player>[];
 
       for (final uid in playerOrder) {
         final playerData = _playersData![uid];
         if (playerData == null) {
-          print('⚠️ CRITIQUE: Données manquantes pour le joueur $uid - SKIP (peut causer bug d\'index)');
+          appLogger.w('Données manquantes pour un joueur — skip');
           continue;
         }
 
         final handSize = playerData['handSize'] as int? ?? 0;
         final isMe = uid == playerId;
-
-        print('🎴 Joueur $uid (${isMe ? "MOI" : "AUTRE"}): handSize=$handSize, myHandLength=${isMe ? _myHand!.length : "N/A"}');
 
         final hand = isMe
             ? _myHand! // Ma main privée
@@ -251,18 +227,11 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
                 ),
               ); // Cartes masquées uniques pour les autres
 
-        print('🎴 Main créée pour $uid: ${hand.length} cartes');
-
         players.add(Player(
           id: uid,
           name: playerData['playerName'] as String,
           hand: hand,
         ));
-      }
-
-      print('👥 Liste players construite: ${players.length} joueurs');
-      for (int i = 0; i < players.length; i++) {
-        print('   [$i] ${players[i].name} (${players[i].id})');
       }
 
       // Construire la pile de défausse
@@ -272,18 +241,12 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
 
       // Trouver l'index du joueur actuel
       final currentPlayerId = _roomData!['currentPlayerId'] as String;
-      print('🎯 CurrentPlayerId Firebase: $currentPlayerId');
-
-      // BUGFIX: Trouver l'index dans la liste players construite, pas dans playerOrder
       final currentPlayerIndex = players.indexWhere((p) => p.id == currentPlayerId);
 
-      print('🎯 CurrentPlayerIndex calculé: $currentPlayerIndex');
       if (currentPlayerIndex == -1) {
-        print('❌ ERREUR: currentPlayerId $currentPlayerId introuvable dans players !');
+        appLogger.e('currentPlayerId introuvable dans la liste des joueurs');
         return;
       }
-
-      print('🎯 Joueur actuel: ${players[currentPlayerIndex].name} (${currentPlayerId == playerId ? "C\'EST MOI ✅" : "PAS MOI ❌"})');
 
       // Créer un drawPile factice avec le bon nombre de cartes uniques
       final deckSize = _gameStateData!['deckSize'] as int? ?? 0;
@@ -314,16 +277,10 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         isPaused: false,
       );
 
-      print('✅ Nouvel état construit: ${players.length} joueurs, currentPlayerIndex: $currentPlayerIndex');
-      print('✅   currentPlayerId: $currentPlayerId (${currentPlayerId == playerId ? "MOI" : "AUTRE"})');
-      print('✅ ÉMISSION DU NOUVEL ÉTAT');
-      print('   → Les widgets vont se mettre à jour');
-      print('   → isPlayerTurn($playerId) sera maintenant: ${newState.isPlayerTurn(playerId)}');
-      print('🔄 ========================================');
+      appLogger.d('Nouvel état Firebase émis — ${players.length} joueurs');
       emit(newState);
     } catch (e, stackTrace) {
-      print('❌ Erreur lors de la construction de l\'état: $e');
-      print('Stack trace: $stackTrace');
+      appLogger.e('Erreur construction état Firebase', error: e, stackTrace: stackTrace);
     }
   }
 
@@ -333,24 +290,11 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
 
   /// Jouer une carte - Délègue à GameActionService
   Future<void> _onPlayCard(PlayCard event, Emitter<CheckgamesState> emit) async {
-    print('🎮 ========================================');
-    print('🎮 MultiplayerGameBloc.playCard APPELÉ');
-    print('🎮 Joueur: $playerId');
-    print('🎮 Cartes à jouer: ${event.cards.length}');
-    print('🎮 État actuel:');
-    print('   - currentPlayerIndex: ${state.currentPlayerIndex}');
-    print('   - currentPlayer: ${state.currentPlayer?.name} (${state.currentPlayer?.id})');
-    print('   - players.length: ${state.players.length}');
-
     // Vérifier que c'est le tour du joueur
     final isMyTurn = state.isPlayerTurn(playerId);
-    print('🎮 isPlayerTurn($playerId) = $isMyTurn');
 
     if (!isMyTurn) {
-      print('❌ REJETÉ: Ce n\'est pas votre tour !');
-      print('   Joueur actuel: ${state.currentPlayer?.id}');
-      print('   Votre ID: $playerId');
-      print('🎮 ========================================');
+      appLogger.w('PlayCard rejeté — pas le tour du joueur');
       emit(state.copyWith(
         errorMessage: 'Ce n\'est pas votre tour !',
       ));
@@ -363,9 +307,6 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
       return;
     }
 
-    print('✅ Vérification OK - C\'est votre tour');
-    print('🎮 Appel à GameActionService...');
-
     try {
       // Déléguer l'action au service
       await _actionService.playCard(
@@ -374,12 +315,9 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         cards: event.cards,
         imposedSuit: event.imposedSuit,
       );
-      print('✅ GameActionService a réussi - Carte(s) jouée(s)');
-      print('🎮 ========================================');
       // L'état sera mis à jour automatiquement via les listeners Firebase
     } catch (e) {
-      print('❌ GameActionService a échoué: $e');
-      print('🎮 ========================================');
+      appLogger.e('Erreur playCard', error: e);
       emit(state.copyWith(
         errorMessage: e.toString(),
       ));
@@ -394,19 +332,10 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
 
   /// Piocher des cartes - Délègue à GameActionService
   Future<void> _onDrawCard(DrawCard event, Emitter<CheckgamesState> emit) async {
-    print('🎮 ========================================');
-    print('🎮 MultiplayerGameBloc.drawCard APPELÉ');
-    print('🎮 Joueur: $playerId');
-    print('🎮 Nombre de cartes: ${event.count}');
-
     if (!state.isPlayerTurn(playerId)) {
-      print('❌ REJETÉ: Ce n\'est pas votre tour');
-      print('🎮 ========================================');
+      appLogger.w('DrawCard rejeté — pas le tour du joueur');
       return;
     }
-
-    print('✅ Vérification OK - C\'est votre tour');
-    print('🎮 Appel à GameActionService...');
 
     try {
       await _actionService.drawCard(
@@ -414,12 +343,9 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         playerId: playerId,
         count: event.count,
       );
-      print('✅ GameActionService a réussi - Carte(s) piochée(s)');
-      print('🎮 ========================================');
       // L'état sera mis à jour automatiquement via les listeners Firebase
     } catch (e) {
-      print('❌ GameActionService a échoué: $e');
-      print('🎮 ========================================');
+      appLogger.e('Erreur drawCard', error: e);
       emit(state.copyWith(
         errorMessage: e.toString(),
       ));
@@ -433,10 +359,8 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
 
   /// Terminer le tour - Délègue à GameActionService
   Future<void> _onEndTurn(EndTurn event, Emitter<CheckgamesState> emit) async {
-    print('🎮 MultiplayerGameBloc: Tentative de terminer le tour');
-
     if (!state.isPlayerTurn(playerId)) {
-      print('⚠️ Ce n\'est pas votre tour');
+      appLogger.w('EndTurn rejeté — pas le tour du joueur');
       return;
     }
 
@@ -445,10 +369,9 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
         roomId: roomId,
         playerId: playerId,
       );
-      print('✅ Tour terminé avec succès');
       // L'état sera mis à jour automatiquement via les listeners Firebase
     } catch (e) {
-      print('❌ Erreur lors de la fin du tour: $e');
+      appLogger.e('Erreur endTurn', error: e);
       emit(state.copyWith(
         errorMessage: e.toString(),
       ));
@@ -466,7 +389,6 @@ class MultiplayerGameBloc extends Bloc<CheckgamesEvent, CheckgamesState> {
 
   /// Ignore les événements qui ne sont pas pertinents en mode multiplayer
   void _onIgnoreEvent(CheckgamesEvent event, Emitter<CheckgamesState> emit) {
-    print('🎮 MultiplayerGameBloc: Événement ${event.runtimeType} ignoré en mode multiplayer');
     // Ne rien faire - ces événements sont pour le mode solo uniquement
   }
 

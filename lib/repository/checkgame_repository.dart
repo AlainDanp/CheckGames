@@ -1,3 +1,4 @@
+import 'package:checkgame/utils/app_logger.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../models/player_stats.dart';
 import '../models/game_history.dart';
@@ -40,13 +41,15 @@ class CheckgameRepository {
   Future<void> savePlayerStats(PlayerStats stats) async {
     if (_statsBox == null) {
       // Impossible de sauvegarder si box non initialisée
+      appLogger.w('savePlayerStats: box non initalisée');
       return;
     }
     try {
       await _statsBox!.put(stats.playerName, stats);
-    } catch (e) {
+    } catch (e, stack) {
+      appLogger.e('Échec sauvegarde stats', error: e, stackTrace: stack);
       // Ignorer les erreurs silencieusement (on pourrait logger ici)
-      return;
+      rethrow;
     }
   }
 
@@ -63,19 +66,19 @@ class CheckgameRepository {
   /// Sauvegarder une partie dans l'historique
   Future<void> saveGameHistory(GameHistory history) async {
     if (_historyBox == null) {
+      appLogger.w('saveGameHistory: box non initialisée');
       // Impossible de sauvegarder si box non initialisée
       return;
     }
     try {
       await _historyBox!.add(history);
-
       // Limiter à 50 parties max
       if (_historyBox!.length > 50) {
         await _historyBox!.deleteAt(0);
       }
-    } catch (e) {
+    } catch (e,stack) {
       // Ignorer les erreurs silencieusement (on pourrait logger ici)
-      return;
+      appLogger.e('Echec sauvegarder historique', error: e, stackTrace: stack);
     }
   }
 

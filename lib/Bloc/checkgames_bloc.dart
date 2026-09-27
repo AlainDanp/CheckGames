@@ -1,3 +1,6 @@
+import 'package:checkgame/services/analytics_services.dart';
+import 'package:checkgame/utils/app_logger.dart';
+
 import '../models/card_suit.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../models/player_card.dart';
@@ -15,8 +18,10 @@ import 'checkgames_state.dart';
 
 class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
     final CheckgameRepository repository;
+    final String humanPlayerId;
+    final AnalyticsService _analytics = AnalyticsService();
 
-    CheckGameBloc({required this.repository}) : super(const CheckgamesState()){
+    CheckGameBloc({required this.repository,this.humanPlayerId = '0'}) : super(const CheckgamesState()){
       on<StartGame>(_onStartGame);
       on<PlayCard>(_onPlayCard);
       on<DrawCard>(_onDrawCard);
@@ -34,14 +39,14 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       required List<PlayingCard> drawPile,
       required List<PlayingCard> discardPile,
     }) {
-      // Recycler la défausse si la pioche a 10 cartes ou moins
-      if (drawPile.length <= 10 && discardPile.length > 1) {
-        final top = discardPile.removeLast(); // Garder la carte du dessus
-        final toRecycle = List<PlayingCard>.from(discardPile);
-        toRecycle.shuffle();
+      // Recycler la défausse si la pioche a 1 carte ou moins
+      if (drawPile.length <= 1 && discardPile.length > 1) {
+        final top = discardPile.removeLast();
+        final toRecycle = List<PlayingCard>.from(discardPile)..shuffle();
         drawPile.addAll(toRecycle);
         discardPile.clear();
         discardPile.add(top);
+        appLogger.d('Deck recyclé — ${drawPile.length} cartes disponibles');
       }
 
       // Piocher les cartes demandées
@@ -88,7 +93,7 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
     }
 
     /// Jouer une carte si autorisé
-    void _onPlayCard(PlayCard event, Emitter<CheckgamesState> emit) {
+    Future<void> _onPlayCard(PlayCard event, Emitter<CheckgamesState> emit) async {
       if (state.players.isEmpty) return;
 
       // Validation sécurisée de l'index
@@ -120,6 +125,9 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         // défausse
         final discard = [...state.discardPile, ...cards];
 
+        final drawPile = List<PlayingCard>.from(state.drawPile);
+        _recycleIfNeeded(drawPile: drawPile, discardPile: discard);
+
         // Détecter si le joueur n'a plus qu'1 carte → "CHECKS!"
         String? checksPlayerId;
         if (newHand.length == 1) {
@@ -138,11 +146,14 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         emit(state.copyWith(
           players: players,
           discardPile: discard,
+          drawPile: drawPile,
           currentPlayerIndex: nextIndex,
           cardsToDraw: draw,
-          // imposition inchangée (si existait)
           skipCount: 0,
+          imposedSuit: null,
           lastChecksPlayerId: checksPlayerId,
+          previousPlayerIndex: state.currentPlayerIndex,
+          lastDrawPlayerId: null,
         ));
 
         _maybeTriggerBot();
@@ -164,7 +175,7 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       if (!canPlay) {
         // Émettre un message d'erreur pour manœuvre invalide UNIQUEMENT pour le joueur humain (id = '0')
         // ET uniquement pour les cartes normales (pas les cartes spéciales comme 2, J, 7, Joker, As)
-        if (event.playerId == '0') {
+        if (event.playerId == humanPlayerId) {
           // Ne pas afficher le message pour les cartes spéciales
           final isSpecialCard = first.value == CardValue.two ||
                                  first.value == CardValue.jack ||
@@ -262,23 +273,25 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
 
         // Sauvegarder l'historique et les stats
         final playerNames = state.players.map((p) => p.name).toList();
-        repository.saveGameHistory(GameHistory(
-          date: DateTime.now(),
-          playerNames: playerNames,
-          finishingOrder: order,
-          hadDuel: true,
-        ));
-
-        // Sauvegarder les stats de chaque joueur
-        for (int i = 0; i < order.length; i++) {
-          final playerId = order[i];
-          final player = players.firstWhere((p) => p.id == playerId);
-          final position = i + 1;
-
-          repository.recordGameResult(
-            playerName: player.name,
-            position: position,
-          );
+        bool duelSaveError = false;
+        try {
+          await repository.saveGameHistory(GameHistory(
+            date: DateTime.now(),
+            playerNames: playerNames,
+            finishingOrder: order,
+            hadDuel: true,
+          ));
+          for (int i = 0; i < order.length; i++) {
+            final playerId = order[i];
+            final player = players.firstWhere((p) => p.id == playerId);
+            await repository.recordGameResult(
+              playerName: player.name,
+              position: i + 1,
+            );
+          }
+        } catch (e) {
+          appLogger.e('Sauvegarde historique échouée (fin duel)', error: e);
+          duelSaveError = true;
         }
 
         emit(state.copyWith(
@@ -289,8 +302,11 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
           cardsToDraw: draw,
           imposedSuit: imposed,
           isGameOver: true,
+          saveError: duelSaveError,
           finishingOrder: order,
           phase: GamePhase.finished,
+          previousPlayerIndex: state.currentPlayerIndex,
+          lastDrawPlayerId: null,
         ));
         return;
       }
@@ -299,6 +315,7 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
       List<String> order = List.of(state.finishingOrder);
       GamePhase nextPhase = state.phase;
       bool gameOver = false;
+      bool saveError = false;
 
       if (newHand.isEmpty) {
         order.add(currentPlayer.id);
@@ -314,23 +331,24 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
 
           // Sauvegarder l'historique et les stats
           final playerNames = state.players.map((p) => p.name).toList();
-          repository.saveGameHistory(GameHistory(
-            date: DateTime.now(),
-            playerNames: playerNames,
-            finishingOrder: order,
-            hadDuel: false,
-          ));
-
-          // Sauvegarder les stats de chaque joueur
-          for (int i = 0; i < order.length; i++) {
-            final playerId = order[i];
-            final player = players.firstWhere((p) => p.id == playerId);
-            final position = i + 1;
-
-            repository.recordGameResult(
-              playerName: player.name,
-              position: position,
-            );
+          try {
+            await repository.saveGameHistory(GameHistory(
+              date: DateTime.now(),
+              playerNames: playerNames,
+              finishingOrder: order,
+              hadDuel: false,
+            ));
+            for (int i = 0; i < order.length; i++) {
+              final playerId = order[i];
+              final player = players.firstWhere((p) => p.id == playerId);
+              await repository.recordGameResult(
+                playerName: player.name,
+                position: i + 1,
+              );
+            }
+          } catch (e) {
+            appLogger.e('Sauvegarde fin de partie échouée', error: e);
+            saveError = true;
           }
         } else if (activePlayers.length == 2 && state.phase != GamePhase.duel) {
           // Déclencher le duel
@@ -346,9 +364,12 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         cardsToDraw: draw,
         imposedSuit: imposed,
         isGameOver: gameOver,
+        saveError: saveError,
         finishingOrder: order,
         phase: nextPhase,
         lastChecksPlayerId: checksPlayerId,
+        previousPlayerIndex: state.currentPlayerIndex,
+        lastDrawPlayerId: null,
       ));
 
       // Appeler _startDuel après emit si nécessaire
@@ -359,6 +380,21 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
 
       if (!gameOver) _maybeTriggerBot();
     }
+
+    void _recycleIfNeeded({
+      required List<PlayingCard> drawPile,
+      required List<PlayingCard> discardPile,
+    }) {
+      if (drawPile.length <= 1 && discardPile.length > 1) {
+        final top = discardPile.removeLast();
+        final toRecycle = List<PlayingCard>.from(discardPile)..shuffle();
+        drawPile.addAll(toRecycle);
+        discardPile.clear();
+        discardPile.add(top);
+        appLogger.d('Deck recyclé — ${drawPile.length} cartes disponibles');
+      }
+    }
+
 
     /// piocher des cartes
     void _onDrawCard(DrawCard event, Emitter<CheckgamesState> emit) {
@@ -395,9 +431,10 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         players: players,
         drawPile: drawPile,
         discardPile: discard,
-        // Fin immédiate du tour
         currentPlayerIndex: nextIndex,
-        // aucune modif d'imposition/cumul ici
+        lastDrawPlayerId: currentPlayer.id,
+        lastDrawCount: drawn.length,
+        previousPlayerIndex: null,
       ));
 
       _maybeTriggerBot();
@@ -434,7 +471,9 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
           drawPile: drawPile,
           discardPile: discard,
           cardsToDraw: 0,
-          currentPlayerIndex: (currentIndex + 1) % n, // avance après pioche
+          currentPlayerIndex: (currentIndex + 1) % n,
+          previousPlayerIndex: currentIndex,
+          lastDrawPlayerId: null,
         ));
         _maybeTriggerBot();
         return; //  pas de "carte bonus" dans ce cas
@@ -477,7 +516,9 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
           players: players,
           drawPile: drawPile,
           discardPile: discard,
-          currentPlayerIndex: (nextIndex + 1) % n, // fin du tour
+          currentPlayerIndex: (nextIndex + 1) % n,
+          previousPlayerIndex: currentIndex,
+          lastDrawPlayerId: null,
         ));
         _maybeTriggerBot();
         return;
@@ -510,6 +551,8 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
         drawPile: drawPile,
         discardPile: discard,
         currentPlayerIndex: newIndex,
+        previousPlayerIndex: currentIndex,
+        lastDrawPlayerId: null,
       ));
       _maybeTriggerBot();
     }
@@ -552,17 +595,26 @@ class CheckGameBloc extends Bloc<CheckgamesEvent, CheckgamesState>{
 
     void _maybeTriggerBot() {
       if (state.players.isEmpty) return;
-      if (state.currentPlayerIndex == 0) return; // joueur humain
-      if (state.isPaused) return; // Jeu en pause (CHECKS affiché)
+
+      final humanIndex = state.players.indexWhere((p) => p.id == humanPlayerId);
+      if (state.currentPlayerIndex == humanIndex) return;
+      if (state.isPaused) return;
+      if (state.isGameOver) return;
 
       // Délai selon la vitesse configurée dans les paramètres
+      final expectedPlayerIndex = state.currentPlayerIndex;
+      final expectedPlayerId = state.players[expectedPlayerIndex].id;
       final delayMs = GameSettingsService.instance.botDelayMs;
 
       Future.delayed(Duration(milliseconds: delayMs), () {
         // sécurité: re-vérifier que c'est toujours un bot et que le jeu n'est pas en pause
-        if (state.players.isNotEmpty && state.currentPlayerIndex != 0 && !state.isPaused) {
+        if(state.players.isEmpty) return;
+        if(state.isPaused) return;
+        if(state.currentPlayerIndex != expectedPlayerIndex) return;
+        if(state.players[state.currentPlayerIndex].id != expectedPlayerId) return;
+        if (state.currentPlayerIndex == humanIndex) return;
+
           add(const BotActionRequested());
-        }
       });
     }
     // lib/Bloc/checkgames_bloc.dart (suite)

@@ -1,6 +1,7 @@
 import '../models/card_suit.dart';
 import '../models/card_value.dart';
 import '../models/playing_card.dart';
+import '../utils/app_logger.dart';
 
 class DeckGenerator {
   /// Génère un paquet de 52 cartes + 2 jokers (54)
@@ -66,7 +67,7 @@ class DeckGenerator {
     }
 
     if (duplicates.isNotEmpty) {
-      print('⚠️ DOUBLONS DÉTECTÉS: ${duplicates.join(', ')}');
+      appLogger.w('Doublons détectés dans le deck: ${duplicates.join(', ')}');
       return false;
     }
 
@@ -76,23 +77,12 @@ class DeckGenerator {
   /// Méthode de débogage pour vérifier le contenu du deck
   static void debugDeck() {
     final deck = generateFullDeck(includeJokers: true);
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('🃏 VÉRIFICATION DU DECK');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-    print('Nombre total de cartes: ${deck.length}');
-    print('Nombre de cartes uniques: ${deck.toSet().length}');
-
     final groups = <CardSuit, List<PlayingCard>>{};
     for (final card in deck) {
       groups.putIfAbsent(card.suit, () => []).add(card);
     }
 
-    print('\n📋 Répartition par couleur:');
-    groups.forEach((suit, cards) {
-      print('  ${suit.name}: ${cards.length} cartes');
-    });
-
-    print('\n✅ Le deck est valide: ${_checkUnique(deck) ? 'OUI' : 'NON'}');
-    print('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
+    final repartition = groups.entries.map((e) => '${e.key.name}: ${e.value.length}').join(', ');
+    appLogger.d('Deck — total: ${deck.length}, uniques: ${deck.toSet().length}, valide: ${_checkUnique(deck)}, répartition: $repartition');
   }
 }

@@ -16,7 +16,7 @@ class StartGame extends CheckgamesEvent{
   @override
   List<Object?> get props => [playerNames];
 }
-// Démarre une partie avec certain nombres de jouers
+
 
 class DrawCard extends CheckgamesEvent{
   final String playerId;

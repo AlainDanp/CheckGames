@@ -1,17 +1,19 @@
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../utils/app_logger.dart';
 
 @pragma('vm:entry-point')
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
   // Firebase doit déjà être initialisé dans main.dart
-  // On vérifie juste qu'il est prêt
   if (Firebase.apps.isEmpty) {
     await Firebase.initializeApp();
   }
-  print('Background message: ${message.messageId}');
+  appLogger.d('Background message reçu');
 }
 
 class PushNotificationService {
@@ -71,10 +73,13 @@ class PushNotificationService {
       );
 
       if (permission.authorizationStatus == AuthorizationStatus.authorized) {
-        print('Push permission accordée');
+        appLogger.i('Push permission accordée');
 
         _fcmToken = await _messaging.getToken();
-        print('FCM Token: $_fcmToken');
+        appLogger.d('FCM Token obtenu');
+        if (_fcmToken != null) {
+          await _saveTokenToServer(_fcmToken!);
+        }
 
         _messaging.onTokenRefresh.listen((token) {
           _fcmToken = token;
@@ -86,20 +91,20 @@ class PushNotificationService {
 
       _initialized = true;
     } catch (e) {
-      print('Erreur init push notifications: $e');
+      appLogger.e('Erreur init push notifications', error: e);
     }
   }
 
   void _setupMessageListeners() {
     // Notification reçue AU PREMIER PLAN
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print('🔔 Foreground message: ${message.notification?.title}');
+      appLogger.d('Foreground message reçu');
       _showLocalNotification(message);
     });
 
     // Quand on clique sur la notif
     FirebaseMessaging.onMessageOpenedApp.listen((RemoteMessage message) {
-      print('🟢 Notification tapped: ${message.data}');
+      appLogger.d('Notification tappée');
       _handleNotificationTap(message.data);
     });
   }
@@ -132,24 +137,35 @@ class PushNotificationService {
 
   void _handleNotificationTap(Map<String, dynamic> data) {
     final type = data['type'];
+    appLogger.d('Notification tap — type: $type');
 
     switch (type) {
       case 'challenge':
-        print('👉 Aller vers défi');
+        // TODO: naviguer vers le défi
         break;
       case 'friend_request':
-        print('👉 Aller vers demandes d’amis');
+        // TODO: naviguer vers les demandes d'amis
         break;
       case 'game_invite':
-        print('👉 Aller vers invitation de partie');
+        // TODO: naviguer vers l'invitation de partie
         break;
       default:
-        print('Type inconnu: $type');
+        appLogger.w('Type de notification inconnu: $type');
     }
   }
 
   Future<void> _saveTokenToServer(String token) async {
-    // TODO: envoyer le token à Firestore ou ton backend
+    try {
+      final uid = FirebaseAuth.instance.currentUser?.uid;
+      if (uid == null) return;
+      await FirebaseFirestore.instance.collection('users').doc(uid).update({
+        'fcmToken': token,
+        'fcmUpdatedAt': FieldValue.serverTimestamp(),
+      });
+      appLogger.d('Token FCM sauvegardé pour $uid');
+    } catch (e) {
+      appLogger.e('Erreur sauvegarde token FCM', error: e);
+    }
   }
 
   Future<void> subscribeToTopic(String topic) async {
@@ -157,7 +173,7 @@ class PushNotificationService {
     try {
       await _messaging.subscribeToTopic(topic);
     } catch (e) {
-      print('Erreur subscribe topic: $e');
+      appLogger.e('Erreur subscribe topic', error: e);
     }
   }
 
@@ -166,7 +182,7 @@ class PushNotificationService {
     try {
       await _messaging.unsubscribeFromTopic(topic);
     } catch (e) {
-      print('Erreur unsubscribe topic: $e');
+      appLogger.e('Erreur unsubscribe topic', error: e);
     }
   }
 }

@@ -1,3 +1,4 @@
+import 'package:checkgame/services/presence_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -8,11 +9,13 @@ import '../Bloc/checkgames_state.dart';
 import '../repository/checkgame_repository.dart';
 import '../services/firebase_room_service.dart';
 import '../services/game_master_service.dart';
+import '../utils/app_logger.dart';
 import 'game_page.dart';
 
 // Widget wrapper qui initialise le jeu et affiche GamePage
 class _MultiplayerGameWrapper extends StatefulWidget {
   final String roomId;
+  final String playerId;
   final bool isHost;
   final String currentUserId;
   final String hostId;
@@ -20,6 +23,7 @@ class _MultiplayerGameWrapper extends StatefulWidget {
   const _MultiplayerGameWrapper({
     required this.roomId,
     required this.isHost,
+    required this.playerId,
     required this.currentUserId,
     required this.hostId,
   });
@@ -35,12 +39,12 @@ class _MultiplayerGameWrapperState extends State<_MultiplayerGameWrapper> {
 
     // SEUL L'HÔTE initialise le jeu via GameMasterService
     if (widget.isHost) {
-      print('🎮 L\'hôte initialise le jeu via GameMasterService...');
+      appLogger.d('L\'hôte initialise le jeu via GameMasterService...');
       final gameMaster = GameMasterService();
       gameMaster.initializeGame(widget.roomId).then((_) {
-        print('✅ Jeu initialisé avec succès par GameMasterService');
+        appLogger.d('Jeu initialisé avec succès par GameMasterService');
       }).catchError((error) {
-        print('❌ Erreur lors de l\'initialisation: $error');
+        appLogger.e('Erreur lors de l\'initialisation du jeu', error: error);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text('Erreur d\'initialisation: $error')),
@@ -48,8 +52,17 @@ class _MultiplayerGameWrapperState extends State<_MultiplayerGameWrapper> {
         }
       });
     } else {
-      print('🎮 Invité en attente de la synchronisation...');
+      appLogger.d('Invité en attente de la synchronisation...');
     }
+    PresenceService.instance.setupPresence(
+        roomId: widget.roomId,
+        playerId: widget.playerId,
+    );
+  }
+  @override
+  void dispose() {
+    PresenceService.instance.removePresence();
+    super.dispose();
   }
 
   @override
@@ -80,10 +93,10 @@ class _WaitingForSyncScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return BlocBuilder<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
-      builder: (context, state) {
-        // Si le jeu n'a pas encore de joueurs, afficher l'écran de chargement
-        if (state.players.isEmpty) {
+    return BlocSelector<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState, bool>(
+      selector: (state) => state.players.isEmpty,
+      builder: (context, isEmpty) {
+        if (isEmpty) {
           return const Scaffold(
             body: Center(
               child: Column(
@@ -103,7 +116,6 @@ class _WaitingForSyncScreen extends StatelessWidget {
           );
         }
 
-        // Une fois synchronisé, afficher le jeu
         return child;
       },
     );
@@ -229,7 +241,7 @@ class _MultiplayerGamePageState extends State<MultiplayerGamePage> {
               );
             }
 
-            print('🎮 ${isHost ? "HÔTE" : "INVITÉ"} - Jeu multijoueur avec ${playerNames.length} joueurs: $playerNames');
+            appLogger.d('${isHost ? "HÔTE" : "INVITÉ"} - Jeu multijoueur avec ${playerNames.length} joueurs');
 
             // Fournir le Bloc comme un Bloc générique pour compatibilité avec GamePage
             return BlocProvider<Bloc<CheckgamesEvent, CheckgamesState>>(
@@ -242,7 +254,7 @@ class _MultiplayerGamePageState extends State<MultiplayerGamePage> {
                 roomId: widget.roomId,
                 isHost: isHost,
                 currentUserId: currentUserId,
-                hostId: hostId!,
+                hostId: hostId!, playerId: '',
               ),
             );
           },

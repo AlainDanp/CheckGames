@@ -32,7 +32,7 @@ service cloud.firestore {
       // Seul le propriétaire peut lire et modifier son profil
       allow read, update: if request.auth != null && request.auth.uid == userId;
 
-      // Personne ne peut supprimer (ou seulement l'utilisateur lui-même si nécessaire)
+      // Seul le propriétaire peut supprimer son profil
       allow delete: if request.auth != null && request.auth.uid == userId;
     }
 
@@ -41,19 +41,31 @@ service cloud.firestore {
     // ============================================================================
 
     match /game_rooms/{roomId} {
-      // Lecture: Tout utilisateur authentifié peut voir les rooms
+      // Lecture : tout utilisateur authentifié peut voir les rooms (lobby)
       allow read: if request.auth != null;
 
-      // Création: Tout utilisateur authentifié peut créer une room
+      // Création : tout utilisateur authentifié peut créer une room
+      // L'hôte doit se désigner lui-même
       allow create: if request.auth != null
                     && request.resource.data.hostId == request.auth.uid;
 
-      // Mise à jour: Tout utilisateur authentifié peut mettre à jour
-      // (Pour rejoindre, quitter, et les transactions de jeu)
-      // Les champs critiques sont protégés par la logique applicative
-      allow update: if request.auth != null;
+      // Mise à jour : deux cas autorisés
+      //   1. Rejoindre la room (l'utilisateur n'est pas encore dans players)
+      //      → seuls currentPlayers et updatedAt peuvent changer
+      //   2. Joueur déjà dans la room (jeu en cours : passage de tour, effets, etc.)
+      //      → l'hôte est un joueur dans la room, isPlayerInRoom() le couvre aussi
+      //
+      // Note : leaveActiveGame() supprime d'abord players/{id} puis met à jour
+      // game_rooms dans la même transaction. Firestore évalue les règles sur l'état
+      // AVANT la transaction, donc isPlayerInRoom() retourne encore true. ✓
+      allow update: if request.auth != null
+                    && (
+                      request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['currentPlayers', 'updatedAt'])
+                      || isPlayerInRoom(roomId)
+                    );
 
-      // Suppression: Seulement l'hôte peut supprimer la room
+      // Suppression : seulement l'hôte
       allow delete: if request.auth != null && isHost(roomId);
 
       // ============================================================================
@@ -61,14 +73,20 @@ service cloud.firestore {
       // ============================================================================
 
       match /players/{playerId} {
-        // Lecture: Tout utilisateur authentifié peut voir les joueurs
+        // Lecture : tout utilisateur authentifié peut voir la liste des joueurs (lobby)
         allow read: if request.auth != null;
 
-        // Écriture: L'utilisateur peut créer/modifier son propre document
-        // OU l'hôte peut modifier n'importe quel joueur (pour l'initialisation du jeu)
-        // OU un joueur de la room peut modifier (pour les mises à jour pendant le jeu)
-        allow write: if request.auth != null
-                     && (request.auth.uid == playerId || isHost(roomId));
+        // Création : seulement soi-même (rejoindre la room)
+        allow create: if request.auth != null && request.auth.uid == playerId;
+
+        // Mise à jour : soi-même (isReady, présence) ou l'hôte (handSize, init)
+        allow update: if request.auth != null
+                      && (request.auth.uid == playerId || isHost(roomId));
+
+        // Suppression : soi-même (quitter) ou l'hôte (fin de partie, expulsion)
+        // Note : la Cloud Function utilise admin SDK → bypass cette règle
+        allow delete: if request.auth != null
+                      && (request.auth.uid == playerId || isHost(roomId));
       }
 
       // ============================================================================
@@ -76,10 +94,10 @@ service cloud.firestore {
       // ============================================================================
 
       match /game_state/{stateId} {
-        // Lecture: Tous les joueurs de la room peuvent voir l'état public
-        allow read: if request.auth != null;
+        // Lecture : uniquement les joueurs de la room
+        allow read: if request.auth != null && isPlayerInRoom(roomId);
 
-        // Écriture: Seulement via transactions (par les joueurs de la room)
+        // Écriture : uniquement les joueurs de la room (via transactions)
         allow write: if request.auth != null && isPlayerInRoom(roomId);
       }
 
@@ -88,26 +106,32 @@ service cloud.firestore {
       // ============================================================================
 
       match /player_hands/{playerId} {
-        // CRITIQUE: Chaque joueur ne voit QUE sa propre main
+        // CRITIQUE : chaque joueur ne voit QUE sa propre main
         allow read: if request.auth != null && request.auth.uid == playerId;
 
-        // Écriture: Seulement via transactions (par les joueurs de la room)
-        // Le serveur (GameMasterService/GameActionService) peut créer et modifier
-        allow write: if request.auth != null && isPlayerInRoom(roomId);
+        // Écriture : soi-même (jouer une carte, piocher)
+        //         OU l'hôte (distribution initiale via GameMasterService)
+        //
+        // Si GameActionService permet à un joueur non-hôte d'écrire dans la main
+        // d'un autre (redistribution, duel), remplacer isHost() par isPlayerInRoom().
+        allow write: if request.auth != null
+                     && (request.auth.uid == playerId || isHost(roomId));
       }
 
       // ============================================================================
-      // ACTIONS SUB-COLLECTION (LOG)
+      // ACTIONS SUB-COLLECTION (LOG IMMUABLE)
       // ============================================================================
 
       match /actions/{actionId} {
-        // Lecture: Tous les joueurs de la room peuvent voir l'historique
+        // Lecture : les joueurs de la room peuvent voir l'historique
         allow read: if request.auth != null && isPlayerInRoom(roomId);
 
-        // Création: Les joueurs peuvent logger leurs actions
-        allow create: if request.auth != null && isPlayerInRoom(roomId);
+        // Création : les joueurs peuvent logger leurs propres actions uniquement
+        allow create: if request.auth != null
+                      && isPlayerInRoom(roomId)
+                      && request.resource.data.playerId == request.auth.uid;
 
-        // Pas de mise à jour ni de suppression (log immutable)
+        // Log immuable : pas de modification ni de suppression
         allow update, delete: if false;
       }
     }
@@ -117,16 +141,16 @@ service cloud.firestore {
     // ============================================================================
 
     match /chat_messages/{roomId}/messages/{messageId} {
-      // Lecture: Les joueurs de la room peuvent lire les messages
+      // Lecture : les joueurs de la room peuvent lire les messages
       allow read: if request.auth != null && isPlayerInRoom(roomId);
 
-      // Création: Les joueurs authentifiés peuvent envoyer des messages
+      // Création : les joueurs authentifiés peuvent envoyer des messages
       // Le playerId dans le message doit correspondre à l'utilisateur authentifié
       allow create: if request.auth != null
                     && isPlayerInRoom(roomId)
                     && request.resource.data.playerId == request.auth.uid;
 
-      // Pas de modification ni de suppression
+      // Messages immuables : pas de modification ni de suppression
       allow update, delete: if false;
     }
   }

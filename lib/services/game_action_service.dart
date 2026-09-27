@@ -3,6 +3,7 @@ import '../models/playing_card.dart';
 import '../models/card_suit.dart';
 import '../models/card_value.dart';
 import '../logic/rule_engine.dart';
+import '../utils/app_logger.dart';
 
 /// Service responsable de l'exécution des actions de jeu via transactions atomiques
 /// Toutes les modifications d'état passent par ce service pour garantir la cohérence
@@ -20,7 +21,7 @@ class GameActionService {
     required List<PlayingCard> cards,
     CardSuit? imposedSuit, // Pour le Valet
   }) async {
-    print('🎮 GameActionService: Joueur $playerId joue ${cards.length} carte(s)');
+    appLogger.d('GameActionService: playCard — ${cards.length} carte(s)');
 
     try {
       await _firestore.runTransaction((transaction) async {
@@ -105,12 +106,6 @@ class GameActionService {
         final direction = roomData['direction'] as int;
         final currentSkipCount = roomData['skipCount'] as int;
 
-        print('🎮 Calcul du prochain joueur:');
-        print('  - playerOrder: $playerOrder');
-        print('  - currentPlayerId: $playerId');
-        print('  - direction: $direction');
-        print('  - skipCount from effects: ${effects['skipCount']}');
-
         final nextPlayerInfo = _getNextPlayer(
           playerOrder: playerOrder,
           currentPlayerId: playerId,
@@ -118,49 +113,38 @@ class GameActionService {
           additionalSkips: effects['skipCount'] as int,
         );
 
-        print('  - nextPlayerId: ${nextPlayerInfo['playerId']}');
-
         // 9. Vérifier si le joueur a gagné (main vide)
         final hasWon = newHand.isEmpty;
         final finishingOrder = List<String>.from(gameStateData['finishingOrder'] ?? []);
         if (hasWon && !finishingOrder.contains(playerId)) {
           finishingOrder.add(playerId);
-          print('🏆 Joueur $playerId a terminé ! Position: ${finishingOrder.length}');
+          appLogger.i('Joueur a terminé — position ${finishingOrder.length}');
         }
 
         // Calculer les joueurs encore en jeu
         final activePlayerIds = playerOrder.where((id) => !finishingOrder.contains(id)).toList();
         final activePlayers = activePlayerIds.length;
 
-        print('📊 Joueurs actifs: $activePlayers / ${playerOrder.length}');
-
         // Vérifier si la partie est terminée (1 seul joueur restant ou moins)
         bool isGameOver = false;
         String? gamePhase;
 
         if (activePlayers <= 1) {
-          // GAME OVER - Ajouter le dernier joueur à l'ordre de finition
           if (activePlayers == 1 && !finishingOrder.contains(activePlayerIds.first)) {
             finishingOrder.add(activePlayerIds.first);
-            print('🏁 Dernier joueur ajouté: ${activePlayerIds.first}');
           }
           isGameOver = true;
           gamePhase = 'finished';
-          print('🎉 PARTIE TERMINÉE ! Ordre final: $finishingOrder');
+          appLogger.i('Partie terminée');
         } else if (activePlayers == 2) {
-          // Phase DUEL (2 joueurs restants)
           final currentPhase = roomData['phase'] as String? ?? 'normal';
           if (currentPhase != 'duel') {
             gamePhase = 'duel';
-            print('⚔️ DUEL déclenché entre les 2 derniers joueurs !');
+            appLogger.i('Duel déclenché');
           }
         }
 
-
-
         // 10. Mettre à jour Firestore (atomique)
-        print('🎮 Mise à jour Firestore: currentPlayerId -> ${nextPlayerInfo['playerId']}');
-
         final roomUpdate = {
           'currentPlayerId': nextPlayerInfo['playerId'],
           'direction': effects['direction'] ?? direction,
@@ -173,7 +157,6 @@ class GameActionService {
           'updatedAt': FieldValue.serverTimestamp(),
         };
 
-        // Ajouter la phase si elle a changé
         if (gamePhase != null) {
           roomUpdate['phase'] = gamePhase;
         }
@@ -182,8 +165,6 @@ class GameActionService {
           _firestore.collection('game_rooms').doc(roomId),
           roomUpdate,
         );
-
-        print('🎮 Transaction update appelé pour room $roomId');
 
         transaction.update(
           _firestore.collection('game_rooms').doc(roomId).collection('game_state').doc('current'),
@@ -226,22 +207,11 @@ class GameActionService {
             'timestamp': FieldValue.serverTimestamp(),
           },
         );
-
-        print('✅ GameActionService: Transaction réussie - Carte(s) jouée(s)');
       });
 
-      print('✅ ========================================');
-      print('✅ GameActionService: SUCCÈS COMPLET');
-      print('✅ Firebase a été mis à jour avec:');
-      print('✅   - Nouveau currentPlayerId (tous les listeners vont recevoir la mise à jour)');
-      print('✅   - Nouvelle défausse');
-      print('✅   - Main du joueur mise à jour');
-      print('✅ ========================================');
+      appLogger.i('GameActionService: playCard réussi');
     } catch (e) {
-      print('❌ ========================================');
-      print('❌ GameActionService: ÉCHEC');
-      print('❌ Erreur lors du jeu de la carte: $e');
-      print('❌ ========================================');
+      appLogger.e('GameActionService: playCard échoué', error: e);
       rethrow;
     }
   }
@@ -252,7 +222,7 @@ class GameActionService {
     required String playerId,
     int count = 1,
   }) async {
-    print('🎮 GameActionService: Joueur $playerId pioche $count carte(s)');
+    appLogger.d('GameActionService: drawCard — $count carte(s)');
 
     try {
       await _firestore.runTransaction((transaction) async {
@@ -292,33 +262,28 @@ class GameActionService {
             .map((c) => _jsonToCard(c as Map<String, dynamic>))
             .toList();
 
-        // 4. Vérifier qu'il y a assez de cartes
+        // 4. Récupérer la défausse (toujours nécessaire pour le recyclage)
+        final gameStateData = gameStateDoc.data()!;
+        final discardPile = (gameStateData['discardPile'] as List)
+            .map((c) => _jsonToCard(c as Map<String, dynamic>))
+            .toList();
+
+        // Recycler si pas assez de cartes OU si la pioche tomberait à 0 ou 1 après tirage
+        if ((deck.length < count || deck.length - count <= 1) && discardPile.length > 1) {
+          final topCard = discardPile.last;
+          final cardsToShuffle = discardPile.sublist(0, discardPile.length - 1)..shuffle();
+          deck.addAll(cardsToShuffle);
+          discardPile.removeRange(0, discardPile.length - 1);
+
+          transaction.update(
+            _firestore.collection('game_rooms').doc(roomId).collection('game_state').doc('current'),
+            {'discardPile': [_cardToJson(topCard)]},
+          );
+          appLogger.d('Deck recyclé — ${deck.length} cartes disponibles');
+        }
+
         if (deck.length < count) {
-          // Si pas assez, mélanger la défausse dans le deck
-          final gameStateData = gameStateDoc.data()!;
-          final discardPile = (gameStateData['discardPile'] as List)
-              .map((c) => _jsonToCard(c as Map<String, dynamic>))
-              .toList();
-
-          if (discardPile.length > 1) {
-            // Garder la dernière carte de la défausse
-            final topCard = discardPile.last;
-            final cardsToShuffle = discardPile.sublist(0, discardPile.length - 1);
-            cardsToShuffle.shuffle();
-            deck.addAll(cardsToShuffle);
-
-            // Mettre à jour la défausse
-            transaction.update(
-              _firestore.collection('game_rooms').doc(roomId).collection('game_state').doc('current'),
-              {
-                'discardPile': [_cardToJson(topCard)],
-              },
-            );
-          }
-
-          if (deck.length < count) {
-            throw Exception('Pas assez de cartes disponibles (même après recyclage)');
-          }
+          throw Exception('Pas assez de cartes disponibles (même après recyclage)');
         }
 
         // 5. Piocher les cartes
@@ -371,9 +336,6 @@ class GameActionService {
         }
 
         // 8. AUTOMATIQUEMENT PASSER LE TOUR (comme en mode solo)
-        // IMPORTANT : Piocher annule les effets de skip (As)
-        // On passe au joueur suivant SANS appliquer skipCount
-        final gameStateData = gameStateDoc.data()!;
         final playerOrder = List<String>.from(gameStateData['playerOrder']);
         final direction = roomData['direction'] as int;
 
@@ -393,8 +355,6 @@ class GameActionService {
           },
         );
 
-        print('🔄 Tour passé automatiquement au joueur: ${nextPlayerInfo['playerId']}');
-
         // 9. Logger l'action
         transaction.set(
           _firestore.collection('game_rooms').doc(roomId).collection('actions').doc(),
@@ -405,11 +365,11 @@ class GameActionService {
             'timestamp': FieldValue.serverTimestamp(),
           },
         );
-
-        print('✅ GameActionService: Carte(s) piochée(s) avec succès');
       });
+
+      appLogger.i('GameActionService: drawCard réussi');
     } catch (e) {
-      print('❌ GameActionService: Erreur lors de la pioche: $e');
+      appLogger.e('GameActionService: drawCard échoué', error: e);
       rethrow;
     }
   }
@@ -419,7 +379,7 @@ class GameActionService {
     required String roomId,
     required String playerId,
   }) async {
-    print('🎮 GameActionService: Joueur $playerId passe son tour');
+    appLogger.d('GameActionService: endTurn');
 
     try {
       await _firestore.runTransaction((transaction) async {
@@ -456,7 +416,7 @@ class GameActionService {
         final cardsToDraw = roomData['cardsToDraw'] as int;
 
         if (cardsToDraw > 0) {
-          print('🎲 Application de la pénalité cumulus: $cardsToDraw cartes à piocher');
+          appLogger.d('Application pénalité cumulus: $cardsToDraw cartes');
 
           // Récupérer le deck et la main
           var deck = (deckData['cards'] as List)
@@ -466,35 +426,29 @@ class GameActionService {
               .map((c) => _jsonToCard(c as Map<String, dynamic>))
               .toList();
 
-          // Vérifier qu'il y a assez de cartes
-          if (deck.length < cardsToDraw) {
-            // Recycler la défausse si nécessaire
-            final discardPile = (gameStateData['discardPile'] as List)
-                .map((c) => _jsonToCard(c as Map<String, dynamic>))
-                .toList();
+          // Recycler si pas assez de cartes OU si la pioche tomberait à 0 ou 1 après tirage
+          final discardPile = (gameStateData['discardPile'] as List)
+              .map((c) => _jsonToCard(c as Map<String, dynamic>))
+              .toList();
 
-            if (discardPile.length > 1) {
-              final topCard = discardPile.last;
-              final cardsToShuffle = discardPile.sublist(0, discardPile.length - 1);
-              cardsToShuffle.shuffle();
-              deck.addAll(cardsToShuffle);
+          if ((deck.length < cardsToDraw || deck.length - cardsToDraw <= 1) &&
+              discardPile.length > 1) {
+            final topCard = discardPile.last;
+            final cardsToShuffle = discardPile.sublist(0, discardPile.length - 1)..shuffle();
+            deck.addAll(cardsToShuffle);
 
-              // Mettre à jour la défausse
-              transaction.update(
-                _firestore.collection('game_rooms').doc(roomId).collection('game_state').doc('current'),
-                {
-                  'discardPile': [_cardToJson(topCard)],
-                },
-              );
-            }
+            transaction.update(
+              _firestore.collection('game_rooms').doc(roomId).collection('game_state').doc('current'),
+              {'discardPile': [_cardToJson(topCard)]},
+            );
+            appLogger.d('Deck recyclé (cumulus) — ${deck.length} cartes disponibles');
           }
 
-          // Piocher les cartes de pénalité
-          final drawnCards = deck.take(cardsToDraw).toList();
-          final remainingDeck = deck.skip(cardsToDraw).toList();
+          // Piocher les cartes de pénalité (on prend ce qui est disponible si deck insuffisant)
+          final actualDraw = deck.length < cardsToDraw ? deck.length : cardsToDraw;
+          final drawnCards = deck.take(actualDraw).toList();
+          final remainingDeck = deck.skip(actualDraw).toList();
           final newHand = [...hand, ...drawnCards];
-
-          print('✅ Pénalité appliquée: ${drawnCards.length} cartes piochées');
 
           // Mettre à jour le deck et la main
           transaction.update(
@@ -577,11 +531,11 @@ class GameActionService {
             'timestamp': FieldValue.serverTimestamp(),
           },
         );
-
-        print('✅ GameActionService: Tour terminé avec succès');
       });
+
+      appLogger.i('GameActionService: endTurn réussi');
     } catch (e) {
-      print('❌ GameActionService: Erreur lors de la fin du tour: $e');
+      appLogger.e('GameActionService: endTurn échoué', error: e);
       rethrow;
     }
   }
@@ -629,12 +583,6 @@ class GameActionService {
   }
 
   /// Calcule le prochain joueur dans la liste circulaire
-  ///
-  /// Système de tour par tour :
-  /// 1. playerOrder = [hôte, joueur2, joueur3, ...] (fixe, créé à l'init)
-  /// 2. On avance dans la liste : index 0 → 1 → 2 → ... → 0 (circulaire)
-  /// 3. direction = 1 (horaire) ou -1 (anti-horaire)
-  /// 4. additionalSkips = nombre de joueurs à sauter (As = skip 1)
   Map<String, dynamic> _getNextPlayer({
     required List<String> playerOrder,
     required String currentPlayerId,
@@ -655,14 +603,6 @@ class GameActionService {
     // Gérer les indices négatifs (si direction = -1, sens anti-horaire)
     if (newIndex < 0) {
       newIndex += playerOrder.length;
-    }
-
-    print('🔄 Tour suivant calculé:');
-    print('   Liste: ${playerOrder.length} joueurs');
-    print('   ${currentIndex} (joueur actuel) → ${newIndex} (suivant)');
-    print('   Direction: ${direction == 1 ? "horaire ↻" : "anti-horaire ↺"}');
-    if (additionalSkips > 0) {
-      print('   ⏭️  Sauts: $additionalSkips joueur(s) sauté(s)');
     }
 
     return {

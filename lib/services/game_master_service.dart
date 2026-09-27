@@ -3,6 +3,7 @@ import '../models/playing_card.dart';
 import '../models/card_suit.dart';
 import '../models/card_value.dart';
 import '../logic/deckgenerator.dart';
+import '../utils/app_logger.dart';
 
 /// Service responsable de l'initialisation et de la gestion serveur du jeu
 /// Ce service est la SEULE source qui peut créer et initialiser l'état du jeu
@@ -17,13 +18,13 @@ class GameMasterService {
   ///
   /// IMPORTANT: Cette méthode doit être appelée UNE SEULE FOIS par l'hôte
   Future<void> initializeGame(String roomId) async {
-    print('🎮 GameMasterService: Début d\'initialisation de la partie $roomId');
+    appLogger.d('GameMasterService: Début initialisation partie');
 
     try {
       await _firestore.runTransaction((transaction) async {
         // 1. Générer et mélanger le deck
         final deck = DeckGenerator.shuffledDeck(includeJokers: true);
-        print('🎮 Deck généré: ${deck.length} cartes');
+        appLogger.d('Deck généré: ${deck.length} cartes');
 
         // 2. Récupérer les joueurs de la room (par ordre de position)
         final playersSnapshot = await _firestore
@@ -39,14 +40,7 @@ class GameMasterService {
 
         // Créer la liste de tour (playerOrder) : [hôte, joueur2, joueur3, ...]
         final playerUids = playersSnapshot.docs.map((doc) => doc.id).toList();
-
-        print('🎮 ========== ORDRE DE JEU (playerOrder) ==========');
-        for (int i = 0; i < playersSnapshot.docs.length; i++) {
-          final doc = playersSnapshot.docs[i];
-          print('🎮   Position $i: ${doc.data()['playerName']} (${doc.id})');
-        }
-        print('🎮 → Premier à jouer: ${playersSnapshot.docs[0].data()['playerName']} (hôte)');
-        print('🎮 =================================================');
+        appLogger.d('Ordre de jeu établi: ${playerUids.length} joueurs');
 
         // 3. Distribuer 5 cartes à chaque joueur
         final hands = <String, List<Map<String, int>>>{};
@@ -62,18 +56,16 @@ class GameMasterService {
             cardIndex++;
           }
           hands[uid] = playerHand;
-          print('🎮 Main distribuée au joueur $uid: ${playerHand.length} cartes');
         }
 
         // 4. Trouver la première carte non-spéciale pour la défausse
         final firstCard = _drawNonSpecialCard(deck, startIndex: cardIndex);
         final discardPile = [_cardToJson(firstCard.card)];
         cardIndex = firstCard.newIndex;
-        print('🎮 Première carte de la défausse: ${firstCard.card}');
 
         // 5. Le reste du deck devient la pioche
         final remainingDeck = deck.sublist(cardIndex);
-        print('🎮 Cartes restantes dans la pioche: ${remainingDeck.length}');
+        appLogger.d('Cartes restantes dans la pioche: ${remainingDeck.length}');
 
         // 6. Mettre à jour le document principal de la room
         transaction.update(
@@ -152,13 +144,11 @@ class GameMasterService {
             'timestamp': FieldValue.serverTimestamp(),
           },
         );
-
-        print('🎮 GameMasterService: Transaction réussie - Jeu initialisé');
       });
 
-      print('✅ GameMasterService: Partie $roomId initialisée avec succès');
+      appLogger.i('GameMasterService: Partie initialisée avec succès');
     } catch (e) {
-      print('❌ GameMasterService: Erreur lors de l\'initialisation: $e');
+      appLogger.e('GameMasterService: Erreur initialisation', error: e);
       rethrow;
     }
   }
@@ -166,7 +156,7 @@ class GameMasterService {
   /// Relance une partie existante
   /// IMPORTANT: Cette méthode doit être appelée UNIQUEMENT par l'hôte
   Future<void> restartGame(String roomId) async {
-    print('🔄 GameMasterService: Relance de la partie $roomId');
+    appLogger.d('GameMasterService: Relance de partie');
 
     try {
       // Vérifier que la room existe
@@ -176,12 +166,11 @@ class GameMasterService {
       }
 
       // Réutiliser la logique d'initialisation
-      // C'est identique à initializeGame mais on peut ajouter des logs spécifiques
       await initializeGame(roomId);
 
-      print('✅ GameMasterService: Partie $roomId relancée avec succès');
+      appLogger.i('GameMasterService: Partie relancée avec succès');
     } catch (e) {
-      print('❌ GameMasterService: Erreur lors de la relance: $e');
+      appLogger.e('GameMasterService: Erreur relance', error: e);
       rethrow;
     }
   }
@@ -203,14 +192,12 @@ class GameMasterService {
   }
 
   /// Tire la première carte non-spéciale du deck
-  /// pour éviter de commencer avec un effet spécial actif
   ({PlayingCard card, int newIndex}) _drawNonSpecialCard(
     List<PlayingCard> deck, {
     required int startIndex,
   }) {
     for (int i = startIndex; i < deck.length; i++) {
       final card = deck[i];
-      // Éviter les cartes spéciales en début de partie
       if (![
         CardValue.ace,
         CardValue.seven,
@@ -222,8 +209,6 @@ class GameMasterService {
       }
     }
 
-    // Si toutes les cartes restantes sont spéciales (très rare),
-    // prendre la première disponible
     if (startIndex < deck.length) {
       return (card: deck[startIndex], newIndex: startIndex + 1);
     }

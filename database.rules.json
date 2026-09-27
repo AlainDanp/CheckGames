@@ -1,0 +1,16 @@
+{
+  "rules": {
+    "presence": {
+      "$roomId": {
+        "$playerId": {
+          ".read": "auth != null",
+          ".write": "auth != null && auth.uid === $playerId"
+        }
+      }
+    },
+    "$other": {
+      ".read": false,
+      ".write": false
+    }
+  }
+}

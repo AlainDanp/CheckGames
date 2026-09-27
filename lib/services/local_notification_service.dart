@@ -1,16 +1,19 @@
 import 'dart:io' show Platform;
 import 'dart:math';
 import 'package:flutter/foundation.dart' show kIsWeb;
+import '../utils/app_logger.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
 
 class LocalNotificationService {
-  static final LocalNotificationService instance = LocalNotificationService._();
+  static final LocalNotificationService instance =
+  LocalNotificationService._();
   LocalNotificationService._();
 
-  final FlutterLocalNotificationsPlugin _plugin = FlutterLocalNotificationsPlugin();
+  final FlutterLocalNotificationsPlugin _plugin =
+  FlutterLocalNotificationsPlugin();
   bool _initialized = false;
 
   /// Callback pour gérer la navigation quand on tap sur une notification
@@ -111,7 +114,8 @@ class LocalNotificationService {
 
     tz.initializeTimeZones();
 
-    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const androidSettings =
+    AndroidInitializationSettings('@mipmap/ic_launcher');
 
     const iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
@@ -275,7 +279,8 @@ class LocalNotificationService {
   }
   tz.TZDateTime _nextInstanceOfTime(int hour, int minute) {
     final now = tz.TZDateTime.now(tz.local);
-    var scheduled = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+    var scheduled = tz.TZDateTime(tz.local, now.year, now.month,
+        now.day, hour, minute);
 
     if (scheduled.isBefore(now)) {
       scheduled = scheduled.add(const Duration(days: 1));
@@ -309,7 +314,8 @@ class LocalNotificationService {
       final scheduledTime = now.add(Duration(hours: hoursToAdd));
 
       // Choisir un message aléatoire
-      final message = _reminderMessages[random.nextInt(_reminderMessages.length)];
+      final message = _reminderMessages[random.nextInt
+        (_reminderMessages.length)];
 
       const androidDetails = AndroidNotificationDetails(
         'checkgames_reminder',
@@ -318,7 +324,8 @@ class LocalNotificationService {
         importance: Importance.defaultImportance,
         priority: Priority.defaultPriority,
         icon: '@drawable/ic_notification', // Icône personnalisée
-        sound: RawResourceAndroidNotificationSound('notification_sound'), // Son personnalisé
+        sound: RawResourceAndroidNotificationSound('notification_sound'),
+        // Son personnalisé
         playSound: true,
       );
 
@@ -346,7 +353,7 @@ class LocalNotificationService {
       );
     }
 
-    print('✅ 12 rappels programmés (toutes les 2h)');
+    appLogger.i('12 rappels programmés');
   }
 
   /// Annule tous les rappels périodiques

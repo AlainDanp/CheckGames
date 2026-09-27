@@ -1,12 +1,16 @@
 import 'dart:io' show Platform;
 import 'dart:math';
+import 'utils/app_logger.dart';
+
 import 'package:checkgame/services/in_app_notification_service.dart';
 import 'package:checkgame/services/local_notification_service.dart';
 import 'package:checkgame/services/notification_service.dart';
+
 import 'package:checkgame/ui/solo_mode_selection_screen.dart';
 import 'package:checkgame/ui/arcade_mode_screen.dart';
 import 'package:checkgame/ui/survival_mode_screen.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+
+import 'package:flutter/foundation.dart' show kIsWeb, PlatformDispatcher;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_native_splash/flutter_native_splash.dart';
@@ -18,6 +22,8 @@ import 'ui/waiting_room_screen.dart';
 import 'ui/multiplayer_game_page.dart';
 import 'ui/profile_screen.dart';
 import 'ui/splash_screen.dart';
+import 'ui/onboarding_screen.dart';
+
 import 'repository/checkgame_repository.dart';
 import 'theme/app_theme.dart';
 import 'utils/page_transitions.dart';
@@ -25,50 +31,60 @@ import 'services/game_settings_service.dart';
 import 'services/audio_service.dart';
 
 import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_crashlytics/firebase_crashlytics.dart';
+
 import 'firebase_options.dart';
 
-/// Clé globale pour la navigation
-final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+import 'package:shared_preferences/shared_preferences.dart';
 
-/// Repository global pour les notifications
-late CheckgameRepository globalRepository;
 
 Future<void> main() async {
-  WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
+  final WidgetsBinding widgetsBinding = WidgetsFlutterBinding.ensureInitialized();
   FlutterNativeSplash.preserve(widgetsBinding: widgetsBinding);
 
-  // Initialiser les notifications uniquement sur mobile
-  final isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  // Crashlytics: erreurs Flutter
+  FlutterError.onError = (errorDetails) {
+    FirebaseCrashlytics.instance.recordFlutterFatalError(errorDetails);
+  };
+
+  // Crashlytics: erreurs async
+  PlatformDispatcher.instance.onError = (error, stack) {
+    FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+    return true;
+  };
+
+  // Initialiser Firebase uniquement sur mobile
+  final bool isMobile = !kIsWeb && (Platform.isAndroid || Platform.isIOS);
+  bool firebaseOk = false;
 
   if (isMobile) {
     try {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
       );
+      firebaseOk = true;
     } catch (e) {
-      print('Erreur Firebase: $e');
+      appLogger.e('Erreur initialisation Firebase', error: e);
     }
   } else {
-    print('Firebase & Notifications skipped on ${Platform.operatingSystem}');
+    appLogger.d('Firebase ignoré sur cette plateforme');
   }
 
+  // Initialiser les notifications uniquement sur mobile
   if (isMobile) {
     try {
       await LocalNotificationService.instance.init();
       await LocalNotificationService.instance.requestPermission();
       await NotificationService.instance.init();
 
-      // Configurer le callback pour la navigation
-      LocalNotificationService.onNotificationTap = _handleNotificationTap;
-
       // Programmer les rappels toutes les 2h
       await LocalNotificationService.instance.setupPeriodicReminders();
     } catch (e) {
-      print('Erreur notifications: $e');
+      appLogger.e('Erreur initialisation notifications', error: e);
     }
   }
 
-  // Permettre toutes les orientations (portrait et paysage)
+  // Autoriser orientations portrait + paysage
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
@@ -79,81 +95,87 @@ Future<void> main() async {
   // Initialiser le repository
   final repository = CheckgameRepository();
   await repository.init();
-  globalRepository = repository; // Stocker globalement pour les notifications
 
-  // Initialiser les paramètres du jeu
+  // Initialiser paramètres du jeu
   await GameSettingsService.instance.init();
 
-  // Appliquer les paramètres audio
+  // Appliquer paramètres audio
   final settings = GameSettingsService.instance;
   AudioService.instance.setSoundEnabled(settings.soundEnabled);
-  AudioService.instance.loadMusicFromSettings(); // Charger la musique sélectionnée
+  AudioService.instance.loadMusicFromSettings();
   AudioService.instance.setMusicEnabled(settings.musicEnabled);
 
-  // Retirer le splash screen
   FlutterNativeSplash.remove();
 
-  // Assigner la clé de navigation aux services
-  InAppNotificationService.instance.navigatorKey = navigatorKey;
-
-  runApp(MyApp(repository: repository));
+  runApp(MyApp(repository: repository, firebaseAvailable: firebaseOk));
 }
 
-/// Gère le tap sur une notification et navigue vers le bon écran
-void _handleNotificationTap(String payload) {
-  // Attendre que le navigator soit prêt
-  WidgetsBinding.instance.addPostFrameCallback((_) {
-    final navigator = navigatorKey.currentState;
-    if (navigator == null) return;
-
-    switch (payload) {
-      case 'solo':
-        navigator.push(MaterialPageRoute(
-          builder: (_) => SoloModeSelectionScreen(repository: globalRepository),
-        ));
-        break;
-
-      case 'arcade':
-        navigator.push(MaterialPageRoute(
-          builder: (_) => ArcadeModeScreen(repository: globalRepository),
-        ));
-        break;
-
-      case 'survival':
-        navigator.push(MaterialPageRoute(
-          builder: (_) => SurvivalModeScreen(repository: globalRepository),
-        ));
-        break;
-
-      case 'random':
-        // Choisir un mode aléatoire
-        final modes = ['solo', 'arcade', 'survival'];
-        final randomMode = modes[Random().nextInt(modes.length)];
-        _handleNotificationTap(randomMode);
-        break;
-
-      default:
-        // Par défaut, aller au menu solo
-        navigator.push(MaterialPageRoute(
-          builder: (_) => SoloModeSelectionScreen(repository: globalRepository),
-        ));
-    }
-  });
-}
 
 class MyApp extends StatefulWidget {
   final CheckgameRepository repository;
-  const MyApp({super.key, required this.repository});
+  final bool firebaseAvailable;
+
+  const MyApp({super.key, required this.repository, this.firebaseAvailable = true});
 
   @override
   State<MyApp> createState() => _MyAppState();
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  final _navigatorKey = GlobalKey<NavigatorState>();
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    InAppNotificationService.instance.navigatorKey = _navigatorKey;
+    LocalNotificationService.onNotificationTap = _handleNotificationTap;
+  }
+
+  void _handleNotificationTap(String payload) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final navigator = _navigatorKey.currentState;
+      if (navigator == null) return;
+
+      switch (payload) {
+        case 'solo':
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => SoloModeSelectionScreen(repository: widget.repository),
+            ),
+          );
+          break;
+
+        case 'arcade':
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => ArcadeModeScreen(repository: widget.repository),
+            ),
+          );
+          break;
+
+        case 'survival':
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => SurvivalModeScreen(repository: widget.repository),
+            ),
+          );
+          break;
+
+        case 'random':
+          final modes = ['solo', 'arcade', 'survival'];
+          final randomMode = modes[Random().nextInt(modes.length)];
+          _handleNotificationTap(randomMode);
+          break;
+
+        default:
+          navigator.push(
+            MaterialPageRoute(
+              builder: (_) => SoloModeSelectionScreen(repository: widget.repository),
+            ),
+          );
+      }
+    });
   }
 
   @override
@@ -164,7 +186,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Reprogrammer les rappels quand l'app revient au premier plan
     if (state == AppLifecycleState.resumed) {
       LocalNotificationService.instance.refreshPeriodicReminders();
     }
@@ -172,13 +193,36 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    // Synchroniser la clé du navigator pour InAppNotificationService
     return MaterialApp(
-      navigatorKey: navigatorKey,
+      navigatorKey: _navigatorKey,
       debugShowCheckedModeBanner: false,
       title: 'checkgames',
       theme: AppTheme.lightTheme,
-      home: SplashScreen(nextScreen: MainMenuScreen(repository: widget.repository)),
+      builder: widget.firebaseAvailable
+          ? null
+          : (context, child) => Column(
+        children: [
+          MaterialBanner(
+            content: const Text(
+              'Mode hors-ligne — Le multijoueur est indisponible.',
+              style: TextStyle(color: Colors.white),
+            ),
+            backgroundColor: const Color(0xFFF57C00),
+            actions: [
+              TextButton(
+                onPressed: () =>
+                    ScaffoldMessenger.of(context).hideCurrentMaterialBanner(),
+                child: const Text('OK', style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+          Expanded(child: child ?? const SizedBox()),
+        ],
+      ),
+      home: SplashScreen(
+        nextScreen: StartupRouter(repository: widget.repository),
+      ),
+
       onGenerateRoute: (settings) {
         // Auth screen avec transition fade
         if (settings.name == '/auth') {
@@ -195,7 +239,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           return SlideRightRoute(page: MultiplayerLobbyScreen());
         }
 
-        // Waiting room avec transition slide + fade
+        // Waiting room avec transition slide fade
         if (settings.name == '/waiting-room') {
           final args = settings.arguments as Map<String, dynamic>?;
           if (args != null) {
@@ -220,7 +264,39 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             );
           }
         }
+
         return null;
+      },
+    );
+  }
+}
+
+/// Décide si on affiche l'onboarding ou le menu principal.
+class StartupRouter extends StatelessWidget {
+  final CheckgameRepository repository;
+  const StartupRouter({super.key, required this.repository});
+
+  Future<bool> _isOnboardingDone() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getBool('onboarding_completed') ?? false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FutureBuilder<bool>(
+      future: _isOnboardingDone(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final done = snapshot.data!;
+        if (done) {
+          return MainMenuScreen(repository: repository);
+        }
+        return OnboardingScreen();
       },
     );
   }

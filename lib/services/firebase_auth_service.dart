@@ -1,5 +1,6 @@
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../utils/app_logger.dart';
 
 class FirebaseAuthService {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -18,12 +19,12 @@ class FirebaseAuthService {
     required String username,
   }) async {
     try {
-      print('🔐 Tentative inscription: $email');
+      appLogger.d('Tentative inscription');
       final userCredential = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
-      print('✅ Utilisateur créé: ${userCredential.user?.uid}');
+      appLogger.i('Utilisateur créé');
 
       // Créer le profil utilisateur dans Firestore
       try {
@@ -36,15 +37,15 @@ class FirebaseAuthService {
           'createdAt': FieldValue.serverTimestamp(),
           'lastSeen': FieldValue.serverTimestamp(),
         });
-        print('✅ Profil utilisateur créé dans Firestore');
+        appLogger.i('Profil Firestore créé');
       } catch (firestoreError) {
-        print('⚠️ Erreur Firestore (profil non créé): $firestoreError');
+        appLogger.w('Profil Firestore non créé', error: firestoreError);
         // Continue même si Firestore échoue - l'utilisateur est authentifié
       }
 
       return userCredential;
     } catch (e) {
-      print('❌ Erreur inscription: $e');
+      appLogger.e('Erreur inscription', error: e);
       rethrow;
     }
   }
@@ -55,27 +56,27 @@ class FirebaseAuthService {
     required String password,
   }) async {
     try {
-      print('🔐 Tentative connexion: $email');
+      appLogger.d('Tentative connexion');
       final userCredential = await _auth.signInWithEmailAndPassword(
         email: email,
         password: password,
       );
-      print('✅ Connexion réussie: ${userCredential.user?.uid}');
+      appLogger.i('Connexion réussie');
 
       // Mettre à jour lastSeen (ne pas bloquer si ça échoue)
       try {
         await _firestore.collection('users').doc(userCredential.user!.uid).update({
           'lastSeen': FieldValue.serverTimestamp(),
         });
-        print('✅ lastSeen mis à jour');
+        appLogger.d('lastSeen mis à jour');
       } catch (firestoreError) {
-        print('⚠️ Erreur mise à jour lastSeen: $firestoreError');
+        appLogger.w('Erreur lastSeen', error: firestoreError);
         // Continue même si la mise à jour échoue
       }
 
       return userCredential;
     } catch (e) {
-      print('❌ Erreur connexion: $e');
+      appLogger.e('Erreur connexion', error: e);
       rethrow;
     }
   }
@@ -83,9 +84,9 @@ class FirebaseAuthService {
   // Connexion anonyme (pour tester rapidement)
   Future<UserCredential> signInAnonymously({String? username}) async {
     try {
-      print('🔐 Tentative connexion anonyme');
+      appLogger.d('Tentative connexion anonyme');
       final userCredential = await _auth.signInAnonymously();
-      print('✅ Connexion anonyme réussie: ${userCredential.user?.uid}');
+      appLogger.i('Connexion anonyme réussie');
 
       // Créer un profil anonyme (ne pas bloquer si ça échoue)
       try {
@@ -99,15 +100,15 @@ class FirebaseAuthService {
           'createdAt': FieldValue.serverTimestamp(),
           'lastSeen': FieldValue.serverTimestamp(),
         });
-        print('✅ Profil anonyme créé: $generatedUsername');
+        appLogger.i('Profil anonyme créé');
       } catch (firestoreError) {
-        print('⚠️ Erreur Firestore (profil anonyme non créé): $firestoreError');
+        appLogger.w('Profil Firestore anonyme non créé', error: firestoreError);
         // Continue même si Firestore échoue - l'utilisateur est authentifié
       }
 
       return userCredential;
     } catch (e) {
-      print('❌ Erreur connexion anonyme: $e');
+      appLogger.e('Erreur connexion anonyme', error: e);
       rethrow;
     }
   }
@@ -120,12 +121,11 @@ class FirebaseAuthService {
   // Récupérer les données du profil
   Future<Map<String, dynamic>?> getUserProfile(String userId) async {
     try {
-      print('📖 Lecture profil: $userId');
+      appLogger.d('Lecture profil utilisateur');
       final doc = await _firestore.collection('users').doc(userId).get();
 
       if (!doc.exists) {
-        print('⚠️ Profil non trouvé, création d\'un profil par défaut');
-        // Créer un profil par défaut si inexistant
+        appLogger.w('Profil non trouvé, création par défaut');
         final defaultProfile = {
           'username': 'Joueur${DateTime.now().millisecondsSinceEpoch % 10000}',
           'email': '',
@@ -135,16 +135,15 @@ class FirebaseAuthService {
           'createdAt': FieldValue.serverTimestamp(),
           'lastSeen': FieldValue.serverTimestamp(),
         };
-
         await _firestore.collection('users').doc(userId).set(defaultProfile);
         return defaultProfile;
       }
 
       final data = doc.data();
-      print('✅ Profil récupéré: ${data?['username']}');
+      appLogger.d('Profil récupéré');
       return data;
     } catch (e) {
-      print('❌ Erreur lecture profil: $e');
+      appLogger.e('Erreur lecture profil', error: e);
       // Retourner un profil par défaut en cas d'erreur
       return {
         'username': 'Joueur${DateTime.now().millisecondsSinceEpoch % 10000}',

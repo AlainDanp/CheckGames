@@ -1,3 +1,4 @@
+import 'package:checkgame/utils/app_snackbar.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -9,7 +10,6 @@ import '../models/card_value.dart';
 import '../models/card_suit.dart';
 import '../utils/responsive_sizing.dart';
 import '../view/widgets/table_widgets.dart';
-import '../view/widgets/playing_card_widget.dart';
 import '../view/widgets/suit_picker_sheet.dart';
 import '../view/widgets/game_over_sheet.dart';
 import '../view/widgets/checks_overlay.dart';
@@ -22,16 +22,11 @@ import '../services/audio_service.dart';
 import '../services/game_master_service.dart';
 import '../services/firebase_room_service.dart';
 import '../services/game_settings_service.dart';
+import '../utils/app_logger.dart';
 
 class GamePage extends StatefulWidget {
-  /// ID du joueur actuel (utilisé en mode multijoueur pour identifier le joueur)
-  /// Si null, on assume le mode solo où le joueur humain est toujours à l'index 0
   final String? playerId;
-
-  /// ID de la room (multijoueur uniquement)
   final String? roomId;
-
-  /// ID de l'hôte (multijoueur uniquement)
   final String? hostId;
 
   const GamePage({
@@ -50,28 +45,16 @@ class _GamePageState extends State<GamePage> {
   final GlobalKey _discardKey = GlobalKey();
   final Map<PlayingCard, GlobalKey> _cardKeys = {};
   final Map<String, GlobalKey> _botCardKeys = {}; // Keys pour les positions des bots
-  bool _gameOverSheetShown = false;
-  String? _lastChecksPlayerIdShown; // Pour ne pas afficher "CHECKS" plusieurs fois pour le même joueur
-  int? _lastDiscardPileLength; // Pour détecter quand une carte est jouée
-  int? _previousPlayerIndex; // Index du joueur précédent
   bool _skipNextBotAnimation = false; // Pour éviter l'animation après que le joueur humain a joué
   bool _isShowingChecks = false; // Flag pour bloquer le jeu pendant l'affichage de CHECKS
   final GlobalKey _deckKey = GlobalKey(); // Key pour la position de la pioche
-  Map<String, int> _playerHandSizes = {}; // Pour détecter quand un joueur pioche
-  bool _wasGameOver = false; // Pour détecter le redémarrage de la partie
 
   /// Réinitialise toutes les variables de suivi pour une nouvelle partie
   void _resetTrackingVariables() {
-    print('🔄 Réinitialisation des variables de suivi pour nouvelle partie');
+    appLogger.d('Réinitialisation des variables de suivi pour nouvelle partie');
     _selected.clear();
-    _gameOverSheetShown = false;
-    _lastChecksPlayerIdShown = null;
-    _lastDiscardPileLength = null;
-    _previousPlayerIndex = null;
     _skipNextBotAnimation = false;
     _isShowingChecks = false;
-    _playerHandSizes.clear();
-    _wasGameOver = false;
   }
 
   @override
@@ -89,23 +72,17 @@ class _GamePageState extends State<GamePage> {
   }
 
   void _showChecksOverlay(String playerName) {
-    // Protection contre les appels multiples
     if (!mounted || _isShowingChecks) return;
 
     // Jouer le son CHECKS
     AudioService.instance.playChecks();
-
-    // Capturer le BLoC avant de créer l'overlay
     final bloc = context.read<Bloc<CheckgamesEvent, CheckgamesState>>();
 
     // Bloquer le jeu pendant l'affichage
-    setState(() {
-      _isShowingChecks = true;
-    });
+    setState(() { _isShowingChecks = true; });
     bloc.add(const SetPaused(true));
 
     late OverlayEntry overlayEntry;
-
     overlayEntry = OverlayEntry(
       builder: (context) => Material(
         color: Colors.black.withOpacity(0.3),
@@ -113,12 +90,13 @@ class _GamePageState extends State<GamePage> {
           child: ChecksOverlay(
             playerName: playerName,
             onComplete: () {
+              overlayEntry.remove();
               if (mounted) {
-                overlayEntry.remove();
-                // Débloquer le jeu après l'animation
-                setState(() {
-                  _isShowingChecks = false;
-                });
+                setState(() { _isShowingChecks = false; });
+                } else{
+                _isShowingChecks = false;
+              }
+              if(!bloc.isClosed){
                 bloc.add(const SetPaused(false));
               }
             },
@@ -126,6 +104,12 @@ class _GamePageState extends State<GamePage> {
         ),
       ),
     );
+
+    if(!mounted){
+      _isShowingChecks = false;
+      if(!bloc.isClosed) bloc.add(const SetPaused(false));
+      return;
+    }
 
     Overlay.of(context).insert(overlayEntry);
   }
@@ -143,8 +127,8 @@ class _GamePageState extends State<GamePage> {
     final isMultiplayer = widget.roomId != null;
     final isHost = widget.playerId != null && widget.playerId == widget.hostId;
 
-    print('🔍 GamePage - isMultiplayer: $isMultiplayer, isHost: $isHost');
-    print('🔍 GamePage - roomId: ${widget.roomId}, playerId: ${widget.playerId}, hostId: ${widget.hostId}');
+    appLogger.d('GamePage - isMultiplayer: $isMultiplayer, isHost: $isHost');
+    appLogger.d('GamePage - session identifiers initialised');
 
     // Capturer le ScaffoldMessenger AVANT de créer l'overlay
     final scaffoldMessenger = ScaffoldMessenger.of(context);
@@ -168,14 +152,14 @@ class _GamePageState extends State<GamePage> {
         },
         onRestart: isMultiplayer && isHost && roomId != null
             ? () async {
-                print('🔍 Callback onRestart appelé');
+                appLogger.d('Callback onRestart appelé');
                 if (mounted) {
                   // Fermer le menu pause d'abord
-                  print('🔍 Fermeture du menu pause');
+                  appLogger.d('Fermeture du menu pause');
                   try {
                     overlayEntry.remove();
                   } catch (e) {
-                    print('⚠️ Erreur lors de la suppression de l\'overlay: $e');
+                    appLogger.e('Erreur lors de la suppression de l\'overlay', error: e);
                   }
                   bloc.add(const SetPaused(false));
 
@@ -192,11 +176,11 @@ class _GamePageState extends State<GamePage> {
                     );
 
                     // Relancer via GameMasterService
-                    print('🔍 Appel de GameMasterService.restartGame pour roomId: $roomId');
+                    appLogger.d('Appel de GameMasterService.restartGame');
                     final gameMaster = GameMasterService();
                     await gameMaster.restartGame(roomId);
 
-                    print('✅ Partie relancée avec succès');
+                    appLogger.d('Partie relancée avec succès');
                     scaffoldMessenger.showSnackBar(
                       const SnackBar(
                         content: Text('✅ Partie relancée !'),
@@ -205,7 +189,7 @@ class _GamePageState extends State<GamePage> {
                       ),
                     );
                   } catch (e) {
-                    print('❌ Erreur lors de la relance: $e');
+                    appLogger.e('Erreur lors de la relance', error: e);
                     scaffoldMessenger.showSnackBar(
                       SnackBar(
                         content: Text('Erreur lors de la relance: $e'),
@@ -214,26 +198,26 @@ class _GamePageState extends State<GamePage> {
                     );
                   }
                 } else {
-                  print('⚠️ Widget non monté');
+                  appLogger.d('Widget non monté');
                 }
               }
             : null,
         onLeaveGame: isMultiplayer && roomId != null && widget.playerId != null
             ? () async {
-                print('🚪 Demande de sortie de partie');
+                appLogger.d('Demande de sortie de partie');
                 try {
                   // Appeler le service Firebase pour quitter la partie
                   final roomService = FirebaseRoomService();
                   await roomService.leaveActiveGame(roomId, widget.playerId!);
 
-                  print('✅ Sortie de partie réussie');
+                  appLogger.d('Sortie de partie réussie');
 
                   // Retourner au menu principal
                   if (mounted) {
                     Navigator.of(context).popUntil((route) => route.isFirst);
                   }
                 } catch (e) {
-                  print('❌ Erreur lors de la sortie: $e');
+                  appLogger.e('Erreur lors de la sortie', error: e);
                   if (mounted) {
                     scaffoldMessenger.showSnackBar(
                       SnackBar(
@@ -247,7 +231,7 @@ class _GamePageState extends State<GamePage> {
             : null,
         onStopGame: !isMultiplayer
             ? () {
-                print('🛑 Arrêt de la partie solo');
+                appLogger.d('Arrêt de la partie solo');
                 // Fermer l'overlay
                 overlayEntry.remove();
                 bloc.add(const SetPaused(false));
@@ -341,173 +325,135 @@ class _GamePageState extends State<GamePage> {
 
   @override
   Widget build(BuildContext context) {
-    return BlocListener<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
-      listener: (context, state) {
-        // Détecter le redémarrage de la partie (isGameOver passe de true à false)
-        // ou quand la défausse est réinitialisée (taille beaucoup plus petite)
-        final isGameRestarting = (_wasGameOver && !state.isGameOver) ||
-            (_lastDiscardPileLength != null &&
-             state.discardPile.isNotEmpty &&
-             state.discardPile.length < _lastDiscardPileLength! - 5);
-
-        if (isGameRestarting) {
-          print('🔄 Détection redémarrage de partie - Réinitialisation des variables');
-          _resetTrackingVariables();
-
-          // Fermer le GameOverSheet s'il est affiché (pour les non-hôtes)
-          // On fait un simple pop pour fermer le modal (showModalBottomSheet)
-          if (Navigator.of(context).canPop()) {
-            Navigator.of(context).pop();
-          }
-
-          // Réinitialiser les valeurs de base après le reset
-          if (state.discardPile.isNotEmpty) {
-            _lastDiscardPileLength = state.discardPile.length;
-          }
-          if (state.players.isNotEmpty) {
-            _previousPlayerIndex = state.currentPlayerIndex;
-            for (final player in state.players) {
-              _playerHandSizes[player.id] = player.hand.length;
-            }
-          }
-          return; // Ne pas exécuter les animations de ce cycle
-        }
-
-        // Mettre à jour le flag _wasGameOver
-        _wasGameOver = state.isGameOver;
-
-        // Détecter quand une carte est jouée
-        if (state.players.isNotEmpty && state.discardPile.isNotEmpty) {
-          final currentDiscardLength = state.discardPile.length;
-
-          // Si la défausse a augmenté, quelqu'un a joué
-          if (_lastDiscardPileLength != null && currentDiscardLength > _lastDiscardPileLength!) {
-
-            // Si on doit skip (le joueur humain vient de jouer avec son animation)
+    return MultiBlocListener(
+      listeners: [
+        // 1. saveError — bug corrigé
+        BlocListener<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
+          listenWhen: (prev, curr) => curr.saveError && !prev.saveError,
+          listener: (ctx, state) => AppSnackbar.warning(
+            ctx,
+            'Résultats non sauvegardés — vérifiez votre espace de stockage.',
+          ),
+        ),
+        // 2. Fin de partie → GameOverSheet
+        BlocListener<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
+          listenWhen: (prev, curr) =>
+              !prev.isGameOver && curr.isGameOver && curr.phase == GamePhase.finished,
+          listener: (ctx, state) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              showModalBottomSheet(
+                context: ctx,
+                isDismissible: false,
+                enableDrag: false,
+                builder: (_) => GameOverSheet(
+                  finishingOrder: state.finishingOrder,
+                  allPlayers: state.players,
+                  isMultiplayer: widget.playerId != null,
+                  isHost: widget.playerId == widget.hostId,
+                  roomId: widget.roomId,
+                  onRestart: () async {
+                    if (widget.playerId != null && widget.playerId == widget.hostId && widget.roomId != null) {
+                      Navigator.pop(ctx);
+                      _resetTrackingVariables();
+                      try {
+                        final gameMaster = GameMasterService();
+                        await gameMaster.restartGame(widget.roomId!);
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          const SnackBar(
+                            content: Text('✅ Partie relancée !'),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      } catch (e) {
+                        ScaffoldMessenger.of(ctx).showSnackBar(
+                          SnackBar(
+                            content: Text('❌ Erreur: $e'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    } else if (widget.playerId != null) {
+                      Navigator.of(ctx).popUntil((route) => route.isFirst);
+                    } else {
+                      Navigator.pop(ctx);
+                      _resetTrackingVariables();
+                      context.read<Bloc<CheckgamesEvent, CheckgamesState>>().add(RestartGame(keepPlayers: true));
+                    }
+                  },
+                ),
+              );
+            });
+          },
+        ),
+        // 3. Redémarrage de partie
+        BlocListener<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
+          listenWhen: (prev, curr) => prev.isGameOver && !curr.isGameOver,
+          listener: (ctx, state) {
+            _resetTrackingVariables();
+            if (Navigator.of(ctx).canPop()) Navigator.of(ctx).pop();
+          },
+        ),
+        // 4. Animation bot
+        BlocListener<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
+          listenWhen: (prev, curr) => curr.discardPile.length > prev.discardPile.length,
+          listener: (ctx, state) {
             if (_skipNextBotAnimation) {
               _skipNextBotAnimation = false;
-            } else {
-              // Calculer qui a joué : c'est le joueur PRÉCÉDENT (avant le changement de tour)
-              // On utilise _previousPlayerIndex qui a été sauvegardé avant le changement
-              if (_previousPlayerIndex != null && _previousPlayerIndex! > 0) {
-                final playerId = state.players[_previousPlayerIndex!].id;
-                final cardPlayed = state.discardPile.last;
-
-                // Délai pour laisser le state se stabiliser
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _animateBotCard(playerId, cardPlayed);
-                });
-              }
+              return;
             }
-          }
-
-          _lastDiscardPileLength = currentDiscardLength;
-          _previousPlayerIndex = state.currentPlayerIndex;
-        }
-
-        // Détecter quand un joueur pioche des cartes
-        for (final player in state.players) {
-          final previousSize = _playerHandSizes[player.id] ?? 0;
-          final currentSize = player.hand.length;
-
-          if (currentSize > previousSize && _lastDiscardPileLength != null) {
-            // Le joueur a pioché des cartes (seulement si ce n'est pas l'initialisation)
-            final cardsDraw = currentSize - previousSize;
+            if (state.previousPlayerIndex != null && state.previousPlayerIndex! > 0) {
+              final botId = state.players[state.previousPlayerIndex!].id;
+              final topCard = state.discardPile.last;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (!mounted) return;
+                _animateBotCard(botId, topCard);
+              });
+            }
+          },
+        ),
+        // 5. Animation pioche
+        BlocListener<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
+          listenWhen: (prev, curr) =>
+          curr.lastDrawPlayerId != null &&
+              curr.lastDrawPlayerId != prev.lastDrawPlayerId,
+          listener: (ctx, state) {
+            final drawPlayerId = state.lastDrawPlayerId!;
+            final drawCount = state.lastDrawCount;
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              _animateDrawCards(player.id, cardsDraw);
+              if (!mounted) return;
+              _animateDrawCards(drawPlayerId, drawCount);
             });
-          }
-
-          _playerHandSizes[player.id] = currentSize;
-        }
-      },
-      child: BlocBuilder<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
-        builder: (context, state) {
-        // Déclencher GameOverSheet quand partie terminée (une seule fois)
-        if (state.isGameOver && state.phase == GamePhase.finished && !_gameOverSheetShown) {
-          _gameOverSheetShown = true;
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            showModalBottomSheet(
-              context: context,
-              isDismissible: false,
-              enableDrag: false,
-              builder: (_) => GameOverSheet(
-                finishingOrder: state.finishingOrder,
-                allPlayers: state.players,
-                isMultiplayer: widget.playerId != null,
-                isHost: widget.playerId == widget.hostId,
-                roomId: widget.roomId,
-                onRestart: () async {
-                  if (widget.playerId != null && widget.playerId == widget.hostId && widget.roomId != null) {
-                    // Multijoueur + Hôte : Relancer la partie
-                    Navigator.pop(context); // Fermer le sheet
-                    _resetTrackingVariables(); // Réinitialiser les variables AVANT le restart
-                    try {
-                      final gameMaster = GameMasterService();
-                      await gameMaster.restartGame(widget.roomId!);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('✅ Partie relancée !'),
-                          backgroundColor: Colors.green,
-                        ),
-                      );
-                    } catch (e) {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text('❌ Erreur: $e'),
-                          backgroundColor: Colors.red,
-                        ),
-                      );
-                    }
-                  } else if (widget.playerId != null) {
-                    // Multijoueur + Non-hôte : Retour au menu (car seul l'hôte peut relancer)
-                    Navigator.of(context).popUntil((route) => route.isFirst);
-                  } else {
-                    // Solo : redémarrer la partie
-                    Navigator.pop(context);
-                    _resetTrackingVariables();
-                    context.read<Bloc<CheckgamesEvent, CheckgamesState>>().add(RestartGame(keepPlayers: true));
-                  }
-                },
-              ),
+          },
+        ),
+        // 6. Overlay CHECKS
+        BlocListener<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
+          listenWhen: (prev, curr) =>
+              curr.lastChecksPlayerId != prev.lastChecksPlayerId &&
+              curr.lastChecksPlayerId != null &&
+              !curr.isGameOver,
+          listener: (ctx, state) {
+            final p = state.players.firstWhere(
+              (p) => p.id == state.lastChecksPlayerId,
+              orElse: () => state.players.first,
             );
-          });
-        }
-
-        // Réinitialiser le flag si la partie redémarre
-        // et fermer le modal GameOverSheet s'il est ouvert
-        if (!state.isGameOver && _gameOverSheetShown) {
-          _gameOverSheetShown = false;
-          // Fermer le GameOverSheet si ouvert
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted && Navigator.of(context).canPop()) {
-              Navigator.of(context).pop();
-            }
-          });
-        }
-
-        // Afficher "CHECKS!" quand un joueur n'a plus qu'une carte
-        // Conditions: nouveau checks, pas déjà affiché, pas en train d'afficher, partie pas finie
-        if (state.lastChecksPlayerId != null &&
-            state.lastChecksPlayerId != _lastChecksPlayerIdShown &&
-            !_isShowingChecks &&
-            !state.isGameOver) {
-          // Marquer immédiatement comme traité pour éviter les doublons
-          _lastChecksPlayerIdShown = state.lastChecksPlayerId;
-
-          final checksPlayer = state.players.firstWhere(
-            (p) => p.id == state.lastChecksPlayerId,
-            orElse: () => state.players.first,
-          );
-
-          // Utiliser Future.microtask au lieu de addPostFrameCallback pour éviter les doublons
-          Future.microtask(() {
-            if (mounted && !_isShowingChecks) {
-              _showChecksOverlay(checksPlayer.name);
-            }
-          });
-        }
-
+            Future.microtask(() {
+              if (mounted && !_isShowingChecks) _showChecksOverlay(p.name);
+            });
+          },
+        ),
+      ],
+      child: BlocBuilder<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState>(
+        buildWhen: (prev, curr) =>
+          prev.players != curr.players ||
+          prev.currentPlayerIndex != curr.currentPlayerIndex ||
+          prev.drawPile.length != curr.drawPile.length ||
+          prev.discardPile != curr.discardPile ||
+          prev.isGameOver != curr.isGameOver ||
+          prev.imposedSuit != curr.imposedSuit ||
+          prev.cardsToDraw != curr.cardsToDraw ||
+          prev.phase != curr.phase ||
+          prev.errorMessage != curr.errorMessage,
+        builder: (context, state) {
         // Afficher le message d'erreur si présent
         if (state.errorMessage != null) {
           WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -1117,29 +1063,29 @@ class _GamePageState extends State<GamePage> {
     if (!mounted) return;
 
     // Debug
-    print('🎴 Tentative d\'animation pour bot: $botId');
-    print('   Cartes dans _botCardKeys: ${_botCardKeys.keys.toList()}');
+    appLogger.d('Tentative d\'animation pour bot: $botId');
+    appLogger.d('Cartes enregistrées dans _botCardKeys: ${_botCardKeys.keys.toList()}');
 
     final botKey = _botCardKeys[botId];
     if (botKey == null) {
-      print('   ❌ Pas de GlobalKey pour ce bot');
+      appLogger.d('Pas de GlobalKey pour ce bot');
       return;
     }
 
     if (botKey.currentContext == null) {
-      print('   ❌ Pas de context pour la key du bot');
+      appLogger.d('Pas de context pour la key du bot');
       return;
     }
 
     if (_discardKey.currentContext == null) {
-      print('   ❌ Pas de context pour la défausse');
+      appLogger.d('Pas de context pour la défausse');
       return;
     }
 
     // Position de départ (bot)
     final botRenderBox = botKey.currentContext!.findRenderObject() as RenderBox?;
     if (botRenderBox == null) {
-      print('   ❌ Pas de RenderBox pour le bot');
+      appLogger.d('Pas de RenderBox pour le bot');
       return;
     }
     final botPosition = botRenderBox.localToGlobal(Offset.zero);
@@ -1147,12 +1093,12 @@ class _GamePageState extends State<GamePage> {
     // Position d'arrivée (défausse)
     final discardRenderBox = _discardKey.currentContext!.findRenderObject() as RenderBox?;
     if (discardRenderBox == null) {
-      print('   ❌ Pas de RenderBox pour la défausse');
+      appLogger.d('Pas de RenderBox pour la défausse');
       return;
     }
     final discardPosition = discardRenderBox.localToGlobal(Offset.zero);
 
-    print('   ✅ Animation: de ${botPosition} vers ${discardPosition}');
+    appLogger.d('Animation bot: de $botPosition vers $discardPosition');
 
     // Jouer le son du mouvement de carte
     AudioService.instance.playCardMove();
@@ -1181,7 +1127,7 @@ class _GamePageState extends State<GamePage> {
     if (!mounted) return;
     if (_deckKey.currentContext == null) return;
 
-    print('🎴 Animation pioche: $count carte(s) pour joueur $playerId');
+    appLogger.d('Animation pioche: $count carte(s) pour joueur $playerId');
 
     // Position de départ (pioche)
     final deckRenderBox = _deckKey.currentContext!.findRenderObject() as RenderBox?;
@@ -1194,13 +1140,13 @@ class _GamePageState extends State<GamePage> {
     // Si c'est le joueur humain (id == '0')
     if (playerId == '0') {
       // Pas d'animation pour le joueur humain pour l'instant (trop complexe avec l'éventail)
-      print('   Pas d\'animation pour le joueur humain');
+      appLogger.d('Pas d\'animation pour le joueur humain');
       return;
     } else {
       // C'est un bot
       final botKey = _botCardKeys[playerId];
       if (botKey == null || botKey.currentContext == null) {
-        print('   Pas de position pour le bot $playerId');
+        appLogger.d('Pas de position pour le bot $playerId');
         return;
       }
 
@@ -1209,7 +1155,7 @@ class _GamePageState extends State<GamePage> {
       targetPosition = botRenderBox.localToGlobal(Offset.zero);
     }
 
-    print('   Animation: de $deckPosition vers $targetPosition');
+    appLogger.d('Animation pioche: de $deckPosition vers $targetPosition');
 
     // Créer des cartes fictives pour l'animation (dos de carte)
     final dummyCard = const PlayingCard(suit: CardSuit.hearts, value: CardValue.ace);
@@ -1244,6 +1190,34 @@ class _GamePageState extends State<GamePage> {
   }
 }
 
+class _TopBarData {
+  const _TopBarData({
+    required this.currentPlayerName,
+    required this.discardCount,
+    required this.drawCount,
+    required this.phase,
+    required this.cardsToDraw,
+  });
+  final String? currentPlayerName;
+  final int discardCount;
+  final int drawCount;
+  final GamePhase phase;
+  final int cardsToDraw;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _TopBarData &&
+      other.currentPlayerName == currentPlayerName &&
+      other.discardCount == discardCount &&
+      other.drawCount == drawCount &&
+      other.phase == phase &&
+      other.cardsToDraw == cardsToDraw;
+
+  @override
+  int get hashCode =>
+      Object.hash(currentPlayerName, discardCount, drawCount, phase, cardsToDraw);
+}
+
 class _TopInfoBar extends StatelessWidget {
   final VoidCallback? onPause;
 
@@ -1251,29 +1225,26 @@ class _TopInfoBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<Bloc<CheckgamesEvent, CheckgamesState>>().state;
-    String suitSymbol(CardSuit s) {
-      switch (s) {
-        case CardSuit.hearts: return '♥';
-        case CardSuit.diamonds: return '♦';
-        case CardSuit.clubs: return '♣';
-        case CardSuit.spades: return '♠';
-        case CardSuit.jokerRed: return '🃏';
-        case CardSuit.jokerBlack: return '🃏';
-      }
-    }
-    Color suitColor(CardSuit s) =>
-        (s == CardSuit.hearts || s == CardSuit.diamonds) ? Colors.red.shade700 : Colors.black87;
+    return BlocSelector<Bloc<CheckgamesEvent, CheckgamesState>, CheckgamesState, _TopBarData>(
+      selector: (state) => _TopBarData(
+        currentPlayerName: state.currentPlayer?.name,
+        discardCount: state.discardPile.length,
+        drawCount: state.drawPile.length,
+        phase: state.phase,
+        cardsToDraw: state.cardsToDraw,
+      ),
+      builder: (context, data) => _buildBar(context, data),
+    );
+  }
 
+  Widget _buildBar(BuildContext context, _TopBarData data) {
     final chips = <Widget>[];
 
-    // Vérifier que le joueur courant existe
-    final currentPlayer = state.currentPlayer;
-    if (currentPlayer != null) {
+    if (data.currentPlayerName != null) {
       chips.add(_StatusBadge(
         icon: Icons.person,
         label: 'Tour',
-        value: currentPlayer.name,
+        value: data.currentPlayerName!,
         color: Colors.white,
         animate: true,
       ));
@@ -1283,19 +1254,18 @@ class _TopInfoBar extends StatelessWidget {
       _StatusBadge(
         icon: Icons.layers,
         label: 'Défausse',
-        value: '${state.discardPile.length}',
+        value: '${data.discardCount}',
         color: Colors.amber,
       ),
       _StatusBadge(
         icon: Icons.casino,
         label: 'Pioche',
-        value: '${state.drawPile.length}',
+        value: '${data.drawCount}',
         color: Colors.cyan,
       ),
     ]);
 
-    // Indicateur DUEL
-    if (state.phase == GamePhase.duel) {
+    if (data.phase == GamePhase.duel) {
       chips.insert(0, _StatusBadge(
         icon: Icons.flash_on,
         label: 'Mode',
@@ -1305,11 +1275,11 @@ class _TopInfoBar extends StatelessWidget {
       ));
     }
 
-    if (state.cardsToDraw > 0) {
+    if (data.cardsToDraw > 0) {
       chips.add(_StatusBadge(
         icon: Icons.add_circle_outline,
         label: 'Cumul',
-        value: '+${state.cardsToDraw}',
+        value: '+${data.cardsToDraw}',
         color: Colors.orange.shade400,
         animate: true,
       ));

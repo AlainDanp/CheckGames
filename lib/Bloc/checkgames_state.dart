@@ -6,6 +6,7 @@ enum GamePhase {normal, duel, finished}
 
 class CheckgamesState {
   final List<Player> players;
+  final bool saveError;
   final int currentPlayerIndex;
   final List<PlayingCard> drawPile;
   final List<PlayingCard> discardPile;
@@ -22,6 +23,9 @@ class CheckgamesState {
   final String? lastChecksPlayerId;  // ID du dernier joueur qui a dit "CHECKS"
   final bool isPaused; // Jeu en pause (pendant affichage de CHECKS par exemple)
   final String? errorMessage; // Message d'erreur pour les manœuvres invalides
+  final int? previousPlayerIndex;  // Index du joueur qui vient de jouer (avant changement de tour)
+  final String? lastDrawPlayerId;  // Joueur qui vient de piocher (reset à null après consommation)
+  final int lastDrawCount;         // Nombre de cartes piochées (0 par défaut)
 
   const CheckgamesState({
     this.players = const [],
@@ -38,6 +42,10 @@ class CheckgamesState {
     this.lastChecksPlayerId,
     this.isPaused = false,
     this.errorMessage,
+    this.saveError = false,
+    this.previousPlayerIndex,
+    this.lastDrawPlayerId,
+    this.lastDrawCount = 0,
   });
 
   static const Object _sentinel = Object();
@@ -63,6 +71,7 @@ class CheckgamesState {
     int? skipCount,
     int? cardsToDraw,
     bool? shouldWaitForResponse,
+    bool? saveError,
     //CardSuit? imposedSuit,
     Object? imposedSuit = _sentinel,
     GamePhase? phase,
@@ -70,6 +79,9 @@ class CheckgamesState {
     Object? lastChecksPlayerId = _sentinel,
     bool? isPaused,
     Object? errorMessage = _sentinel,
+    Object? previousPlayerIndex = _sentinel,
+    Object? lastDrawPlayerId = _sentinel,
+    int? lastDrawCount,
   }) {
     final CardSuit? nextImposed = identical(imposedSuit, _sentinel)
         ? this.imposedSuit
@@ -82,6 +94,14 @@ class CheckgamesState {
     final String? nextErrorMessage = identical(errorMessage, _sentinel)
         ? this.errorMessage
         : errorMessage as String?;
+
+    final int? nextPreviousPlayerIndex = identical(previousPlayerIndex, _sentinel)
+        ? this.previousPlayerIndex
+        : previousPlayerIndex as int?;
+
+    final String? nextLastDrawPlayerId = identical(lastDrawPlayerId, _sentinel)
+        ? this.lastDrawPlayerId
+        : lastDrawPlayerId as String?;
 
     return CheckgamesState(
       players: players ?? this.players,
@@ -98,6 +118,10 @@ class CheckgamesState {
       lastChecksPlayerId: nextChecksPlayerId,
       isPaused: isPaused ?? this.isPaused,
       errorMessage: nextErrorMessage,
+      saveError: saveError ?? this.saveError,
+      previousPlayerIndex: nextPreviousPlayerIndex,
+      lastDrawPlayerId: nextLastDrawPlayerId,
+      lastDrawCount: lastDrawCount ?? this.lastDrawCount,
     );
   }
 }
