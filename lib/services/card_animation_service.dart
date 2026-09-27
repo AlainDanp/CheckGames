@@ -39,15 +39,30 @@ class CardAnimationService {
         startPositions: startPositions,
         endPosition: endPosition,
         duration: duration,
-        onComplete: () {
-          overlayEntry.remove();
-          completer.complete();
-        },
+        onComplete: () => _finish(overlayEntry),
       ),
     );
 
+    _active[overlayEntry] = completer;
     Overlay.of(context).insert(overlayEntry);
     return completer.future;
+  }
+
+  /// Animations en cours, avec le Completer attendu par l'appelant
+  final Map<OverlayEntry, Completer<void>> _active = {};
+
+  void _finish(OverlayEntry entry) {
+    final completer = _active.remove(entry);
+    if (completer == null) return;
+    if (entry.mounted) entry.remove();
+    completer.complete();
+  }
+
+  /// Retire immédiatement toutes les animations (ex : quand on quitte la page)
+  void cancelAll() {
+    for (final entry in _active.keys.toList()) {
+      _finish(entry);
+    }
   }
 
   Offset? _getPosition(GlobalKey key) {

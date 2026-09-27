@@ -48,6 +48,7 @@ class _GamePageState extends State<GamePage> {
   bool _skipNextBotAnimation = false; // Pour éviter l'animation après que le joueur humain a joué
   bool _isShowingChecks = false; // Flag pour bloquer le jeu pendant l'affichage de CHECKS
   final GlobalKey _deckKey = GlobalKey(); // Key pour la position de la pioche
+  final Set<OverlayEntry> _overlays = {}; // Overlays actifs, retirés au dispose
 
   /// Réinitialise toutes les variables de suivi pour une nouvelle partie
   void _resetTrackingVariables() {
@@ -66,9 +67,26 @@ class _GamePageState extends State<GamePage> {
 
   @override
   void dispose() {
+    // Retirer les overlays encore affichés (animations, menus) pour qu'ils
+    // ne restent pas à l'écran sur la page suivante
+    for (final entry in _overlays.toList()) {
+      _removeOverlay(entry);
+    }
+    CardAnimationService.instance.cancelAll();
     // Arrêter la musique quand on quitte la page
     AudioService.instance.stopBackgroundMusic();
     super.dispose();
+  }
+
+  /// Les overlays sont insérés dans l'Overlay racine (au-dessus de toutes les
+  /// pages) : on les suit pour pouvoir les retirer au dispose.
+  void _insertOverlay(OverlayEntry entry) {
+    _overlays.add(entry);
+    Overlay.of(context).insert(entry);
+  }
+
+  void _removeOverlay(OverlayEntry entry) {
+    if (_overlays.remove(entry) && entry.mounted) entry.remove();
   }
 
   void _showChecksOverlay(String playerName) {
@@ -90,7 +108,7 @@ class _GamePageState extends State<GamePage> {
           child: ChecksOverlay(
             playerName: playerName,
             onComplete: () {
-              overlayEntry.remove();
+              _removeOverlay(overlayEntry);
               if (mounted) {
                 setState(() { _isShowingChecks = false; });
                 } else{
@@ -111,7 +129,7 @@ class _GamePageState extends State<GamePage> {
       return;
     }
 
-    Overlay.of(context).insert(overlayEntry);
+    _insertOverlay(overlayEntry);
   }
 
   void _showPauseMenu() {
@@ -140,13 +158,13 @@ class _GamePageState extends State<GamePage> {
       builder: (overlayContext) => PauseMenu(
         onResume: () {
           if (mounted) {
-            overlayEntry.remove();
+            _removeOverlay(overlayEntry);
             bloc.add(const SetPaused(false));
           }
         },
         onQuit: () {
           if (mounted) {
-            overlayEntry.remove();
+            _removeOverlay(overlayEntry);
             bloc.add(RestartGame(keepPlayers: true));
           }
         },
@@ -157,7 +175,7 @@ class _GamePageState extends State<GamePage> {
                   // Fermer le menu pause d'abord
                   appLogger.d('Fermeture du menu pause');
                   try {
-                    overlayEntry.remove();
+                    _removeOverlay(overlayEntry);
                   } catch (e) {
                     appLogger.e('Erreur lors de la suppression de l\'overlay', error: e);
                   }
@@ -205,6 +223,7 @@ class _GamePageState extends State<GamePage> {
         onLeaveGame: isMultiplayer && roomId != null && widget.playerId != null
             ? () async {
                 appLogger.d('Demande de sortie de partie');
+                _removeOverlay(overlayEntry);
                 try {
                   // Appeler le service Firebase pour quitter la partie
                   final roomService = FirebaseRoomService();
@@ -233,7 +252,7 @@ class _GamePageState extends State<GamePage> {
             ? () {
                 appLogger.d('Arrêt de la partie solo');
                 // Fermer l'overlay
-                overlayEntry.remove();
+                _removeOverlay(overlayEntry);
                 bloc.add(const SetPaused(false));
                 // Retourner au menu principal
                 if (mounted) {
@@ -246,7 +265,7 @@ class _GamePageState extends State<GamePage> {
       ),
     );
 
-    Overlay.of(context).insert(overlayEntry);
+    _insertOverlay(overlayEntry);
   }
 
   /// Affiche une popup de confirmation pour quitter la partie
@@ -314,13 +333,13 @@ class _GamePageState extends State<GamePage> {
         message: message,
         onComplete: () {
           if (mounted) {
-            overlayEntry.remove();
+            _removeOverlay(overlayEntry);
           }
         },
       ),
     );
 
-    Overlay.of(context).insert(overlayEntry);
+    _insertOverlay(overlayEntry);
   }
 
   @override
@@ -1114,13 +1133,13 @@ class _GamePageState extends State<GamePage> {
         duration: const Duration(milliseconds: 600),
         onComplete: () {
           if (mounted) {
-            overlayEntry.remove();
+            _removeOverlay(overlayEntry);
           }
         },
       ),
     );
 
-    Overlay.of(context).insert(overlayEntry);
+    _insertOverlay(overlayEntry);
   }
 
   void _animateDrawCards(String playerId, int count) {
@@ -1157,7 +1176,7 @@ class _GamePageState extends State<GamePage> {
 
     appLogger.d('Animation pioche: de $deckPosition vers $targetPosition');
 
-    // Créer des cartes fictives pour l'animation (dos de carte)
+    // Carte fictive : affichée face cachée, sa valeur n'est jamais visible
     final dummyCard = const PlayingCard(suit: CardSuit.hearts, value: CardValue.ace);
 
     // Animer chaque carte avec un léger décalage
@@ -1176,15 +1195,16 @@ class _GamePageState extends State<GamePage> {
             startPositions: [deckPosition],
             endPosition: targetPosition!,
             duration: const Duration(milliseconds: 400),
+            faceDown: true,
             onComplete: () {
               if (mounted) {
-                overlayEntry.remove();
+                _removeOverlay(overlayEntry);
               }
             },
           ),
         );
 
-        Overlay.of(context).insert(overlayEntry);
+        _insertOverlay(overlayEntry);
       });
     }
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../models/playing_card.dart';
 import 'playing_card_widget.dart';
+import 'table_widgets.dart';
 
 class AnimatedCardOverlay extends StatefulWidget {
   final List<PlayingCard> cards;
@@ -8,6 +9,7 @@ class AnimatedCardOverlay extends StatefulWidget {
   final Offset endPosition;
   final Duration duration;
   final VoidCallback onComplete;
+  final bool faceDown; // Affiche le dos de la carte (ex : pioche d'un adversaire)
 
   const AnimatedCardOverlay({
     super.key,
@@ -16,6 +18,7 @@ class AnimatedCardOverlay extends StatefulWidget {
     required this.endPosition,
     required this.duration,
     required this.onComplete,
+    this.faceDown = false,
   });
 
   @override
@@ -131,7 +134,9 @@ class _AnimatedCardOverlayState extends State<AnimatedCardOverlay>
                         ],
                       ),
                       child: RepaintBoundary(
-                        child: PlayingCardWidget(card: card, width: 84),
+                        child: widget.faceDown
+                            ? const CardBack(width: 84)
+                            : PlayingCardWidget(card: card, width: 84),
                       ),
                     ),
                   ),

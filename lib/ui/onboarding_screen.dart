@@ -28,13 +28,13 @@ class OnboardingScreen extends StatelessWidget {
         PageViewModel(
           title: "Règles simples ",
           body: "Défaussez-vous de toutes vos cartes avant vos adversaires. Attention aux cartes spéciales !",
-          image: _buildImage('assets/tutorial/rules.png'),
+          image: _buildIcon(Icons.style),
           decoration: _getPageDecoration(),
         ),
         PageViewModel(
           title: "C'est parti ! ",
           body: "Commencez par le tutoriel ou lancez directement une partie",
-          image: _buildImage('assets/tutorial/ready.png'),
+          image: _buildIcon(Icons.play_circle_fill),
           decoration: _getPageDecoration(),
         ),
       ],
@@ -57,7 +57,16 @@ class OnboardingScreen extends StatelessWidget {
 
   Widget _buildImage(String path) {
     return Center(
-      child: Image.asset(path, width: 250, height: 250),
+      child: Image.asset(path, width: 250, height: 250,
+        // Repli si l'image est absente du bundle
+        errorBuilder: (_, __, ___) => const Icon(Icons.style, size: 160, color: Colors.green),
+      ),
+    );
+  }
+
+  Widget _buildIcon(IconData icon) {
+    return Center(
+      child: Icon(icon, size: 160, color: Colors.green),
     );
   }
 
@@ -82,6 +91,7 @@ class OnboardingScreen extends StatelessWidget {
   Future<void> _completeOnboarding(BuildContext context) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('onboarding_completed', true);
+    if (!context.mounted) return;
     Navigator.of(context).pushReplacementNamed('/main_menu');
   }
 }

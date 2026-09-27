@@ -224,6 +224,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       ),
 
       onGenerateRoute: (settings) {
+        // Menu principal (utilisé à la fin de l'onboarding)
+        if (settings.name == '/main_menu') {
+          return FadeRoute(page: MainMenuScreen(repository: widget.repository));
+        }
+
         // Auth screen avec transition fade
         if (settings.name == '/auth') {
           return FadeRoute(page: AuthScreen());
